@@ -4,6 +4,8 @@
 #include <ArduinoBLE.h>
 #include "utility/ATT.h"
 
+#include "communicationservice.hpp"
+
 #define TRUE 1
 #define FLASE 0
 
@@ -52,6 +54,9 @@ BLEFloatCharacteristic BPM_blue("8a405d98-1d36-11ef-9262-0242ac120002", BLERead 
 BLEFloatCharacteristic BATTERY_CHARACTERSTIC("363a2846-1dc7-11ef-9262-0242ac120002", BLERead | BLENotify);
 BLECharacteristic APP_CHARACTERISITC("563a2846-1dc7-11ef-9262-0242ac120002", BLERead | BLEWrite | BLENotify, 512);
 
+CommunicationService communicationService(&APP_CHARACTERISITC);
+
+
 void initBLE() {
   BLE.setLocalName("EKG-Eigner-Code");
   BLE.setAdvertisedService(bleService);
@@ -70,7 +75,7 @@ void initBLE() {
   BLE.addService(bleService);
 
   BLE.advertise();
-
+  //TODO Change to -1 und dann counter neu testen ob jz das erste 0 packet ankommt!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   APP_CHARACTERISITC.writeValue(static_cast<uint8_t>(0));
 }
 
@@ -79,6 +84,9 @@ void blePeripheralConnectHandler(BLEDevice connectedDevice) {
   //BLE.setConnectable(false);
   BLE.stopAdvertise();
   connectedDevice = connectedDevice;
+
+  communicationService.setConnectedDevice(&connectedDevice);
+
   Serial.println("Stopping advertise");
 }
 
@@ -86,6 +94,9 @@ void blePeripheralDisconnectHandler(BLEDevice disconnectedDevice) {
   Serial.println("Device disconnected");
   //A new device has to enable sending for itsself again
   dataSendingReady = false;
+
+  communicationService.setConnectedDevice(NULL);
+
   BLE.advertise();
   //BLE.setConnectable(true);
   Serial.println("Starting to advertise again");
@@ -118,6 +129,9 @@ void loop() {
   // put your main code here, to run repeatedly:
   unsigned long current_time = millis();
 
+
+  
+
   if(BLE.connected() && dataSendingReady) {
     if(current_time - last_time > 3000) {
       Serial.println("SENDING DATA");
@@ -130,10 +144,12 @@ void loop() {
     send = true;
     }
   }
-
-  
-
-
-  
-
 }
+
+void handleAppCommunication() {
+  if(APP_CHARACTERISITC.written()) {
+    APP_CHARACTERISITC.value();
+  }
+}
+
+
