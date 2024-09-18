@@ -13,7 +13,7 @@ class CommunicationService {
 
 private:
     BLECharacteristic *appCharacteristic;
-    BLEDevice *connectedDevice;
+    std::uint16_t mtu;
 
 public:
     CommunicationService(BLECharacteristic *appCharacteristic);
@@ -26,9 +26,27 @@ public:
      */
     void sendData(OPCodes opCode, std::uint8_t *data, std::uint16_t length);
 
-    void setConnectedDevice(BLEDevice *connectedDevice){
-      this->connectedDevice = connectedDevice;
+
+    void setMTU(std::uint16_t mtu) {
+      this->mtu = mtu;
     }
+
+    void print(char *data, std::uint16_t length) {
+      
+      char *packetBuffer = (char*) malloc(length + 1);
+      packetBuffer[0] = 5;
+
+      for(int i = 1; i <= length; i++) {
+        packetBuffer[i] = data[i-1];
+      }
+
+      this->appCharacteristic->writeValue(packetBuffer);
+
+      free(packetBuffer);
+    }
+    //void setConnectedDevice(BLEDevice& connectedDevice){
+    //  this->connectedDevice = &connectedDevice;
+    //}
 };
 
 

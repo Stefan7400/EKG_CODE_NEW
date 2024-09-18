@@ -1,17 +1,44 @@
 #include <SPI.h>
 #include "SdFat.h"
+#include "pinDefinitions.h"
 
 #include <ArduinoBLE.h>
 #include "utility/ATT.h"
 
 #include "communicationservice.hpp"
+#include "opcodes.h"
+
+#include "NRF52_MBED_TimerInterrupt.h"
+#include "NRF52_MBED_ISR_Timer.h"
+
 
 #define TRUE 1
 #define FLASE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD TRUE
+#define USE_SD_CARD FALSE
 
+
+#define SAMPLETIME 5
+
+#define HW_TIMER_INTERVAL_MS 1
+#define RINGBUFFERSIZE 500
+
+const uint16_t SAADC_RESULT_BUFFER_SIZE = 10;  // Buffer für ADC
+volatile nrf_saadc_value_t SAADC_RESULT_BUFFER[SAADC_RESULT_BUFFER_SIZE];
+
+uint8_t ADC_buffer_full = 0;
+volatile uint16_t ADC_buffer_nextwriteindex=0;
+volatile uint16_t ADC_buffer_nextreadindex=0;
+volatile short ADCbuffer[RINGBUFFERSIZE];
+float autoc[RINGBUFFERSIZE];
+
+// Init NRF52 timer NRF_TIMER3
+NRF52_MBED_Timer ITimer(NRF_TIMER_3);
+
+// Init NRF52_MBED_ISRTimer
+// Each NRF52_MBED_ISRTimer can service 16 different ISR-based timers
+NRF52_MBED_ISRTimer ISR_Timer;
 
 SdFs sd;
 FsFile file;
@@ -24,6 +51,8 @@ BLEDevice connectedDevice;
 
 void setup() {
   Serial.begin(9600);
+  pinMode(2, INPUT);
+  pinMode(3, INPUT);
 
   SPI.begin();
 
@@ -45,6 +74,14 @@ void setup() {
 
   initBLE();
 
+   if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler)) {
+    Serial.print("Starting ITimer OK, millis() = ");
+    Serial.println(millis());
+  } else
+    Serial.println("Can't set ITimer. Select another freq. or timer");
+
+  ISR_Timer.setInterval(SAMPLETIME, timerIRQ);
+
 }
 
 BLEService bleService("4a30d5ac-1d36-11ef-9262-0242ac120002");
@@ -56,6 +93,101 @@ BLECharacteristic APP_CHARACTERISITC("563a2846-1dc7-11ef-9262-0242ac120002", BLE
 
 CommunicationService communicationService(&APP_CHARACTERISITC);
 
+void initADC() {
+  // Disable the SAADC during configuration
+  nrf_saadc_disable();
+  // Configure A2 in single ended mode
+  const nrf_saadc_channel_config_t channel_config = {
+    .resistor_p = NRF_SAADC_RESISTOR_DISABLED,
+    .resistor_n = NRF_SAADC_RESISTOR_DISABLED,
+    .gain = NRF_SAADC_GAIN1_6,
+    .reference = NRF_SAADC_REFERENCE_INTERNAL,
+    .acq_time = NRF_SAADC_ACQTIME_10US,
+    .mode = NRF_SAADC_MODE_SINGLE_ENDED,
+    .burst = NRF_SAADC_BURST_DISABLED,
+    .pin_p = NRF_SAADC_INPUT_AIN6,  // Pin A2
+    .pin_n = NRF_SAADC_INPUT_DISABLED
+  };
+
+  // initialize the SAADC channel by calling the hal function, declared in nrf_saadc.h
+  nrf_saadc_channel_init(1, &channel_config);               // use channel 1
+  nrf_saadc_resolution_set(NRF_SAADC_RESOLUTION_12BIT);     // Configure the resolution
+  nrf_saadc_oversample_set(NRF_SAADC_OVERSAMPLE_256X);  //Enable oversampling
+
+  NRF_SAADC->SAMPLERATE = (SAADC_SAMPLERATE_MODE_Timers << SAADC_SAMPLERATE_MODE_Pos)| ((uint32_t)500 << SAADC_SAMPLERATE_CC_Pos);
+
+  // Configure RESULT Buffer and MAXCNT
+  NRF_SAADC->RESULT.PTR = (uint32_t)SAADC_RESULT_BUFFER;
+  NRF_SAADC->RESULT.MAXCNT = SAADC_RESULT_BUFFER_SIZE;
+
+  // Set the END mask to an interrupt: when the result buffer is filled, trigger an interrupt
+ // nrf_saadc_int_enable(NRF_SAADC_INT_END);
+  // Enable the STARTED event interrupt, to trigger an interrupt each time the STARTED event happens
+  //nrf_saadc_int_enable(NRF_SAADC_INT_STARTED);
+  // Register the interrupts in NVIC, these functions are declared in core_cm4.h
+ //  NVIC_SetPriority(SAADC_IRQn, 3UL);
+ //  NVIC_EnableIRQ(SAADC_IRQn);
+  nrf_saadc_enable();  // Enable the SAADC
+
+  // Calibrate the SAADC by finding its offset
+  NRF_SAADC->TASKS_CALIBRATEOFFSET = 1;
+  while (NRF_SAADC->EVENTS_CALIBRATEDONE == 0)
+    ;
+  NRF_SAADC->EVENTS_CALIBRATEDONE = 0;
+  while (NRF_SAADC->STATUS == (SAADC_STATUS_STATUS_Busy << SAADC_STATUS_STATUS_Pos))
+    ;
+  Serial.println("Finished SAADC Configuration");
+
+  nrf_saadc_task_trigger(NRF_SAADC_TASK_START);   // Zieladresse zürücksetzen
+  delay(5);                                       // Allow some time for the START task to trigger
+                                                  // Trigger the SAMPLE task
+  nrf_saadc_task_trigger(NRF_SAADC_TASK_SAMPLE); 
+}
+
+void TimerHandler() {
+  ISR_Timer.run();
+}
+
+
+void timerIRQ() {
+  if (nrf_saadc_event_check(NRF_SAADC_EVENT_END))  // Buffer full
+  {
+    nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
+
+    for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
+    {
+      ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
+      ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex+1) % RINGBUFFERSIZE;
+    }
+//      ADCbuffer[i] = SAADC_RESULT_BUFFER[i];
+    ADC_buffer_full = 1;
+    nrf_saadc_task_trigger(NRF_SAADC_TASK_START);  // damit die Adresse wieder von vorne hochgezählt wird
+  }
+
+  if (nrf_saadc_event_check(NRF_SAADC_EVENT_RESULTDONE))
+    ;
+  {
+    nrf_saadc_event_clear(NRF_SAADC_EVENT_RESULTDONE);
+    nrf_saadc_task_trigger(NRF_SAADC_TASK_SAMPLE);  // damit die nächste wandlung gestartet wird
+  }
+}
+
+extern "C" {
+   void SAADC_IRQHandler_v() {
+     nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+
+    for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
+    {
+          ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
+          ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex+1) % RINGBUFFERSIZE;
+    }
+     // ADCbuffer[RINGBUFFERSIZE i] = SAADC_RESULT_BUFFER[i];
+//      ADCbuffer[i] = SAADC_RESULT_BUFFER[i];
+    ADC_buffer_full = 1;
+    nrf_saadc_task_trigger(NRF_SAADC_TASK_START);  // damit die Adresse wieder von vorne hochgezählt wird
+   }
+ }
 
 void initBLE() {
   BLE.setLocalName("EKG-Eigner-Code");
@@ -85,7 +217,7 @@ void blePeripheralConnectHandler(BLEDevice connectedDevice) {
   BLE.stopAdvertise();
   connectedDevice = connectedDevice;
 
-  communicationService.setConnectedDevice(&connectedDevice);
+  //communicationService.setConnectedDevice(connectedDevice);
 
   Serial.println("Stopping advertise");
 }
@@ -95,7 +227,7 @@ void blePeripheralDisconnectHandler(BLEDevice disconnectedDevice) {
   //A new device has to enable sending for itsself again
   dataSendingReady = false;
 
-  communicationService.setConnectedDevice(NULL);
+  //communicationService.setConnectedDevice(NULL);
 
   BLE.advertise();
   //BLE.setConnectable(true);
@@ -125,24 +257,43 @@ const char *msg = "baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 int counter = 0;
 bool send = false;
 
+#include <cstring>
+
 void loop() {
   // put your main code here, to run repeatedly:
   unsigned long current_time = millis();
+  Serial.print("ANALOG: ");
+  Serial.println(analogRead(A0));
+  delay(500);
 
+  if(dataSendingReady) {
+      char *data = "MY DATA SEND AS PARAM";
+      communicationService.print(data, strlen(data));
+  }
 
-  
+  if(current_time - last_time > 5000) {
+      Serial.print("MTU: in loop: ");
+      Serial.println(ATT.mtu((connectedDevice)));
+      Serial.print("ADRESSSE IN LOOP: ");
+      Serial.println((uintptr_t)&APP_CHARACTERISITC, HEX);
 
-  if(BLE.connected() && dataSendingReady) {
-    if(current_time - last_time > 3000) {
+      
+      last_time = current_time;
+  }
+ 
+  if(BLE.connected() && dataSendingReady && !send) {
+    
       Serial.println("SENDING DATA");
-      Serial.print("Used Payload (MTU - 3 Bytes): ");
-      Serial.println(int(ATT.mtu(connectedDevice) - 3));
-      //APP_CHARACTERISITC.writeValue(msg, sizeof(msg));
-      APP_CHARACTERISITC.writeValue(static_cast<int32_t>(counter));
+      Serial.println(ATT.mtu((connectedDevice)));
+
+      char *msg = "DasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasistdasEnde";
+
+      communicationService.sendData(OPCodes::LIST_ECK, reinterpret_cast<uint8_t*>(msg), strlen(msg));
+
       counter++;
-    last_time = current_time;
+    
     send = true;
-    }
+    
   }
 }
 
