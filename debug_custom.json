@@ -1,0 +1,6 @@
+{
+  "servertype": "jlink",
+  "device": "nRF52840_xxAA",
+  "interface": "SWD",
+  "serverpath": "C:/Program Files/SEGGER/JLink_V798i/JLinkGDBServerCL"
+}

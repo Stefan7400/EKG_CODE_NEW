@@ -1,6 +1,5 @@
 #include <SPI.h>
 #include "SdFat.h"
-#include "pinDefinitions.h"
 
 #include <ArduinoBLE.h>
 #include "utility/ATT.h"
@@ -16,7 +15,7 @@
 #define FLASE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD FALSE
+#define USE_SD_CARD TRUE
 
 
 #define SAMPLETIME 5
@@ -245,6 +244,7 @@ void initSDCard() {
 
   if (!sd.begin(CHIP_SELECT_PIN)) {
     Serial.println("SD Card init failed!");
+    return;
   }
 
   Serial.println("SD Card init successfully");

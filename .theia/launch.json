@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "cwd": "${workspaceFolder}",
+      "executable": "./bin/executable.elf",
+      "name": "Debug with JLink",
+      "request": "launch",
+      "type": "cortex-debug",
+      "device": "",
+      "runToEntryPoint": "main",
+      "showDevDebugOutput": "none",
+      "servertype": "jlink"
+    },
+  ]
+}
