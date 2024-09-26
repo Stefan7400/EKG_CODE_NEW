@@ -14,14 +14,14 @@ CommunicationService::CommunicationService(BLECharacteristic *appCharacteristic)
 void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uint16_t length) {
 
 
-  Serial.print("ADRESSSE IN SERVICE: ");
-  Serial.println((uintptr_t)&(*this->appCharacteristic), HEX);
+  Serial.print("LENGHT: " + String(length));
+
 
   //The current mtu size for the connected device
   //std::uint16_t currentMTUSize = ATT.mtu((*this->connectedDevice));
   //Serial.println("Current MTU Size: " + String(currentMTUSize));
 
-  //Minus 3 bytes for ATT protocol data and 
+  //Minus 3 bytes for ATT protocol data and
   std::uint16_t blePayloadSize = this->mtu - 3;
   Serial.println("BLE Payload Size: " + String(blePayloadSize));
   //minus an additional 2 bytes for the opcode and last bool of the send packet
@@ -31,9 +31,11 @@ void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uin
   int neededPackets = (length / maxPayloadSize) + 1;
   int currentDataPos = 0;
 
-  for(int currentPacketNr = 0; currentPacketNr < neededPackets; currentPacketNr++) {
+  Serial.print("NEEDED PACKETS: " + String(neededPackets));
 
-    
+  for (int currentPacketNr = 0; currentPacketNr < neededPackets; currentPacketNr++) {
+
+
 
     std::uint16_t payloadSize = std::min(maxPayloadSize, static_cast<std::uint16_t>(length - currentDataPos));
 
@@ -44,7 +46,7 @@ void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uin
     //packet->last = (currentPacketNr == (neededPackets - 1));
     //memcpy(packet->payload, data + currentDataPos, payloadSize);
 
-    std::uint8_t *packetBuffer = (std::uint8_t*) malloc(blePayloadSize);
+    std::uint8_t *packetBuffer = (std::uint8_t *)malloc(blePayloadSize);
     //insert the opcode
     packetBuffer[0] = static_cast<std::uint8_t>(opCode);
     //last?
@@ -55,17 +57,11 @@ void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uin
     Serial.print("PAYLOADSIZE + 5: ");
     Serial.println(payloadSize + 5);
 
-    this->appCharacteristic->writeValue(packetBuffer, payloadSize +5);
-    
+    this->appCharacteristic->writeValue(packetBuffer, payloadSize + 5);
+
 
     currentDataPos += payloadSize;
 
     free(packetBuffer);
   }
-
-
-
-  
 }
-
-

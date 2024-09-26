@@ -9,13 +9,14 @@
 class AppService {
 private:
     SdFs& sd;
-
-
-    // Private constructor to prevent direct instantiation
+   
+public:
     AppService(SdFs& sd);
 
 
-public:
+    void createFile(char* fileName);
+
+    void deleteFile(char* fileName);
     
 
 

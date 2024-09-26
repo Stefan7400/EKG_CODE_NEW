@@ -1,4 +1,4 @@
 enum class Modes {
-  LIVE,
-  
-}
+	LIVE,
+
+};

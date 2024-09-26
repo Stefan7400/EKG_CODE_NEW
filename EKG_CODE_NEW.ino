@@ -4,6 +4,7 @@
 #include <ArduinoBLE.h>
 #include "utility/ATT.h"
 
+#include "appservice.hpp"
 #include "communicationservice.hpp"
 #include "opcodes.h"
 
@@ -32,6 +33,14 @@ volatile uint16_t ADC_buffer_nextreadindex=0;
 volatile short ADCbuffer[RINGBUFFERSIZE];
 float autoc[RINGBUFFERSIZE];
 
+std::map<byte, OPCodes> OPCodes_Mapping = {
+    {0, OPCodes::NO_OP},
+    {1, OPCodes::LIST_EKG},
+    {2, OPCodes::START_24H_EKG},
+    {3, OPCodes::ABORT_24_H_EKG}
+
+};
+
 // Init NRF52 timer NRF_TIMER3
 NRF52_MBED_Timer ITimer(NRF_TIMER_3);
 
@@ -44,6 +53,7 @@ FsFile file;
 //Pin which is used for the CS 
 const int CHIP_SELECT_PIN = 10;
 
+bool updateMTUReady = false;
 bool dataSendingReady = false;
 
 BLEDevice connectedDevice;
@@ -65,10 +75,12 @@ void setup() {
     yield();
   }
 
-  #ifdef USE_SD_CARD
+  initADC();
+
+  #if USE_SD_CARD
     initSDCard();
   #else
-    Serial.println("SD Card init skipped!");  
+    Serial.println("sd card init skipped!");  
   #endif
 
   initBLE();
@@ -85,12 +97,13 @@ void setup() {
 
 BLEService bleService("4a30d5ac-1d36-11ef-9262-0242ac120002");
 
-BLEFloatCharacteristic Signal("62045d8e-1d36-11ef-9262-0242ac120002", BLERead | BLENotify);
+BLECharacteristic Signal("62045d8e-1d36-11ef-9262-0242ac120002", BLERead | BLENotify, sizeof(SAADC_RESULT_BUFFER));
 BLEFloatCharacteristic BPM_blue("8a405d98-1d36-11ef-9262-0242ac120002", BLERead | BLENotify);
 BLEFloatCharacteristic BATTERY_CHARACTERSTIC("363a2846-1dc7-11ef-9262-0242ac120002", BLERead | BLENotify);
 BLECharacteristic APP_CHARACTERISITC("563a2846-1dc7-11ef-9262-0242ac120002", BLERead | BLEWrite | BLENotify, 512);
 
 CommunicationService communicationService(&APP_CHARACTERISITC);
+AppService appSerivce(sd);
 
 void initADC() {
   // Disable the SAADC during configuration
@@ -235,6 +248,18 @@ void blePeripheralDisconnectHandler(BLEDevice disconnectedDevice) {
 
 void bleOnMTUExchange(BLEDevice ignore) {
   Serial.println("MTU-Exchange happened, data can be exchanged now.");
+  updateMTUReady = true;
+}
+
+void updateMTU() {
+  if(!updateMTUReady) {
+    return;
+  }
+  //TODO maybe see if this can be set add the event handler
+  communicationService.setMTU(ATT.mtu(connectedDevice));
+
+  //Update done 
+  updateMTUReady = false;
   dataSendingReady = true;
 }
 
@@ -259,19 +284,22 @@ bool send = false;
 
 #include <cstring>
 
+int counter_2 = 0;
+
 void loop() {
+  
   // put your main code here, to run repeatedly:
   unsigned long current_time = millis();
-  Serial.print("ANALOG: ");
-  Serial.println(analogRead(A0));
-  delay(500);
 
-  if(dataSendingReady) {
-      char *data = "MY DATA SEND AS PARAM";
-      communicationService.print(data, strlen(data));
-  }
-
+  updateMTU();
+  
+  handleAppCommunication();
+  //Serial.print("ANALOG: ");
+  //Serial.println(analogRead(A0));
+  //delay(500);
+  /*
   if(current_time - last_time > 5000) {
+      Serial.println("TEST");
       Serial.print("MTU: in loop: ");
       Serial.println(ATT.mtu((connectedDevice)));
       Serial.print("ADRESSSE IN LOOP: ");
@@ -280,7 +308,36 @@ void loop() {
       
       last_time = current_time;
   }
- 
+  */
+//&& !send && dataSendingReady
+  if (ADC_buffer_full) {
+      // Send everything to the app
+      //Increase the readIndex
+       
+      
+
+      if(BLE.connected() && dataSendingReady){
+        //Serial.println("FIRST FLOAT: " + String(ADCbuffer[ADC_buffer_nextreadindex]));
+        //Serial.println("SECOND FLOAT: " + String(ADCbuffer[ADC_buffer_nextreadindex+1]));
+        //Serial.println("TIME ELAPSED: " + String(current_time - last_time));
+
+        Signal.setValue((byte*) &(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
+        //Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
+
+      }
+
+
+      ADC_buffer_nextreadindex += SAADC_RESULT_BUFFER_SIZE;
+
+      if (ADC_buffer_nextreadindex >= RINGBUFFERSIZE) {
+          //RESET TO 0, if this is true then the nextreadindex is prob 500 (as the SAADC_RESULT_BUFFER_SIZE is 10)
+          ADC_buffer_nextreadindex = 0;
+      }
+
+      ADC_buffer_full = 0;
+  }
+
+ /*
   if(BLE.connected() && dataSendingReady && !send) {
     
       Serial.println("SENDING DATA");
@@ -295,12 +352,70 @@ void loop() {
     send = true;
     
   }
+  */
 }
 
 void handleAppCommunication() {
   if(APP_CHARACTERISITC.written()) {
-    APP_CHARACTERISITC.value();
+
+    int length = APP_CHARACTERISITC.valueLength();
+
+    if (length == 0) {
+        //Should not happen!
+        Serial.println("APP_CHARACTERISTIC LENGTH is 0 !");
+        return;
+    }
+
+    char buffer[length];
+    APP_CHARACTERISITC.readValue(buffer, length);
+
+    //Fetch the first byte to determine the opcode
+    byte opCodeByte = buffer[0];
+
+    auto it = OPCodes_Mapping.find(opCodeByte);
+
+    if (it == OPCodes_Mapping.end()) {
+        //Not found!
+        
+        Serial.println("Unknown Opcode" + String(opCodeByte));
+        return;
+    }   
+
+    OPCodes opCode = it->second;
+
+    switch (opCode)
+    {
+    case OPCodes::NO_OP:
+        break;
+    case OPCodes::LIST_EKG:
+        break;
+    case OPCodes::START_24H_EKG:
+        handleStart24HEKG(buffer,length);
+        
+        break;
+    case OPCodes::ABORT_24_H_EKG:
+        break;
+    default:
+        break;
+    }
+
+
   }
+}
+
+void handleStart24HEKG(char *buffer, int lenght) {
+    //Filename has the length of the send data because -1 byte (for the opcode) + 1 byte for the \0 terminator
+    char fileName[lenght];
+
+    //Subtract bc the \0 terminator is not in the buffer 
+    memcpy(fileName, &buffer[1], lenght - 1);
+
+    //Add the \0 terminator
+    fileName[lenght - 1] = '\0';
+
+    Serial.println("FILENAME " + String(fileName));
+
+    appSerivce.createFile(fileName);
 }
 
 

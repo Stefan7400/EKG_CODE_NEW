@@ -2,6 +2,7 @@
 #include "BLECharacteristic.h"
 #include "utility/ATT.h"
 #include "opcodes.h"
+#include "appservice.hpp"
 
 #ifndef COMMUNICATIONSERVICE_HPP
 #define COMMUNICATIONSERVICE_HPP
