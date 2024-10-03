@@ -17,6 +17,10 @@ private:
     std::uint16_t mtu;
 
 public:
+    /**
+     * 
+     * @param appCharacteristic The characteristic from BLE which is used to communicate with the app
+    */
     CommunicationService(BLECharacteristic *appCharacteristic);
 
     /**
@@ -26,6 +30,10 @@ public:
      * @param data The send data as byte array
      */
     void sendData(OPCodes opCode, std::uint8_t *data, std::uint16_t length);
+
+    void sendSuccessResponse(OPCodes opCode,const std::uint8_t *message, std::uint16_t length);
+
+    void sendErrorResponse(OPCodes opCode, const std::uint8_t* message, std::uint16_t length);
 
 
     void setMTU(std::uint16_t mtu) {

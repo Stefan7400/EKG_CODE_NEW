@@ -7,13 +7,15 @@
 #include "appservice.hpp"
 #include "communicationservice.hpp"
 #include "opcodes.h"
+#include "modes.h"
+#include "result.h"
 
 #include "NRF52_MBED_TimerInterrupt.h"
 #include "NRF52_MBED_ISR_Timer.h"
 
 
 #define TRUE 1
-#define FLASE 0
+#define FALSE 0
 
 //If sd card should be used (init etc.)
 #define USE_SD_CARD TRUE
@@ -33,11 +35,15 @@ volatile uint16_t ADC_buffer_nextreadindex=0;
 volatile short ADCbuffer[RINGBUFFERSIZE];
 float autoc[RINGBUFFERSIZE];
 
+//The current mode which the controller is in, alawys start with live mode
+Modes currentMode = Modes::LIVE;
+
 std::map<byte, OPCodes> OPCodes_Mapping = {
     {0, OPCodes::NO_OP},
     {1, OPCodes::LIST_EKG},
     {2, OPCodes::START_24H_EKG},
-    {3, OPCodes::ABORT_24_H_EKG}
+    {3, OPCodes::ABORT_24_H_EKG},
+    {6, OPCodes::DELETE_EKG_FILE}
 
 };
 
@@ -171,7 +177,7 @@ void timerIRQ() {
       ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
       ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex+1) % RINGBUFFERSIZE;
     }
-//      ADCbuffer[i] = SAADC_RESULT_BUFFER[i];
+
     ADC_buffer_full = 1;
     nrf_saadc_task_trigger(NRF_SAADC_TASK_START);  // damit die Adresse wieder von vorne hochgezählt wird
   }
@@ -186,7 +192,7 @@ void timerIRQ() {
 
 extern "C" {
    void SAADC_IRQHandler_v() {
-     nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
+    nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 
     for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
@@ -277,8 +283,6 @@ void initSDCard() {
 
 unsigned long last_time = 0;
 
-const char *msg = "baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
 int counter = 0;
 bool send = false;
 
@@ -314,6 +318,10 @@ void loop() {
       // Send everything to the app
       //Increase the readIndex
        
+      auto delay = current_time - last_time;
+      //Serial.println(String(delay));
+
+      last_time = current_time;
       
 
       if(BLE.connected() && dataSendingReady){
@@ -388,12 +396,15 @@ void handleAppCommunication() {
     case OPCodes::NO_OP:
         break;
     case OPCodes::LIST_EKG:
+        handleListEKGs();
         break;
     case OPCodes::START_24H_EKG:
         handleStart24HEKG(buffer,length);
-        
         break;
     case OPCodes::ABORT_24_H_EKG:
+        break;
+    case OPCodes::DELETE_EKG_FILE:
+        handleDeleteEKGFile(buffer, length);
         break;
     default:
         break;
@@ -401,6 +412,31 @@ void handleAppCommunication() {
 
 
   }
+}
+
+
+#include <cstring>
+
+void handleListEKGs()
+{
+    Serial.println("LIST EKGS RECEIVED");
+    char *EKGS = "ASD;ANOTHER;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA;BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB;CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC;DDDDDDDDDDDDDDDDDDDDDDD;E;DDDDDDDDDDDDDDDDDDDDDDDDD;FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG;HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH;ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    communicationService.sendData(OPCodes::LIST_EKG, reinterpret_cast<std::uint8_t*>(EKGS) , strlen(EKGS));
+}
+
+void handleDeleteEKGFile(char* buffer, int lenght) {
+    char fileName[lenght];
+    memcpy(fileName, &buffer[1], lenght - 1);
+    fileName[lenght - 1] = '\0';
+
+    Result result = appSerivce.deleteFile(fileName);
+
+    if (result.is_ok()) {
+        communicationService.sendSuccessResponse(OPCodes::SUCCESS_RESPONSE, result.message(), result.message_length());
+    }
+    else {
+        communicationService.sendErrorResponse(OPCodes::SUCCESS_RESPONSE, result.message(), result.message_length());
+    }
 }
 
 void handleStart24HEKG(char *buffer, int lenght) {
@@ -415,7 +451,14 @@ void handleStart24HEKG(char *buffer, int lenght) {
 
     Serial.println("FILENAME " + String(fileName));
 
-    appSerivce.createFile(fileName);
+    Result result = appSerivce.createFile(fileName);
+
+    if (result.is_ok()) {
+        communicationService.sendSuccessResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
+    }
+    else {
+        communicationService.sendErrorResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
+    }
 }
 
 

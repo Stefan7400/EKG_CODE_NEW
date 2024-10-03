@@ -13,38 +13,21 @@ CommunicationService::CommunicationService(BLECharacteristic *appCharacteristic)
 
 void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uint16_t length) {
 
-
-  Serial.print("LENGHT: " + String(length));
-
-
-  //The current mtu size for the connected device
-  //std::uint16_t currentMTUSize = ATT.mtu((*this->connectedDevice));
-  //Serial.println("Current MTU Size: " + String(currentMTUSize));
-
   //Minus 3 bytes for ATT protocol data and
   std::uint16_t blePayloadSize = this->mtu - 3;
-  Serial.println("BLE Payload Size: " + String(blePayloadSize));
+  
   //minus an additional 2 bytes for the opcode and last bool of the send packet
   std::uint16_t maxPayloadSize = blePayloadSize - 2;
-  Serial.println("Max Payload Size: " + String(maxPayloadSize));
-
+  
   int neededPackets = (length / maxPayloadSize) + 1;
   int currentDataPos = 0;
 
-  Serial.print("NEEDED PACKETS: " + String(neededPackets));
+  Serial.println("NEEDED PACKETS " + String(neededPackets));
 
   for (int currentPacketNr = 0; currentPacketNr < neededPackets; currentPacketNr++) {
 
 
-
     std::uint16_t payloadSize = std::min(maxPayloadSize, static_cast<std::uint16_t>(length - currentDataPos));
-
-
-    //blePacket *packet = (blePacket*) malloc(blePayloadSize);
-
-    //packet->opCode= static_cast<std::uint8_t>(opCode);
-    //packet->last = (currentPacketNr == (neededPackets - 1));
-    //memcpy(packet->payload, data + currentDataPos, payloadSize);
 
     std::uint8_t *packetBuffer = (std::uint8_t *)malloc(blePayloadSize);
     //insert the opcode
@@ -54,14 +37,47 @@ void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uin
     //the payload
     memcpy(packetBuffer + 2, data + currentDataPos, payloadSize);
 
-    Serial.print("PAYLOADSIZE + 5: ");
-    Serial.println(payloadSize + 5);
-
     this->appCharacteristic->writeValue(packetBuffer, payloadSize + 5);
-
 
     currentDataPos += payloadSize;
 
     free(packetBuffer);
+    delay(100);
   }
+}
+
+void CommunicationService::sendSuccessResponse(OPCodes opCode, const std::uint8_t* message, std::uint16_t length)
+{
+    Serial.println("Sending success response");
+    //TODO Adjust to needed size maybe this even needs to have a fragmentation (lieber nicht)
+    std::uint8_t* packetBuffer = (std::uint8_t*)malloc(200);
+
+    packetBuffer[0] = static_cast<std::uint8_t>(OPCodes::SUCCESS_RESPONSE);
+    packetBuffer[1] = static_cast<std::uint8_t>(opCode);
+    memcpy(packetBuffer + 2, message, length);
+
+    this->appCharacteristic->writeValue(packetBuffer, length + 2);
+
+    free(packetBuffer);
+}
+
+void CommunicationService::sendErrorResponse(OPCodes opCode, const std::uint8_t* message, std::uint16_t length)
+{
+    Serial.println("Sending error response");
+    std::uint8_t* packetBuffer = (std::uint8_t*)malloc(200);
+
+    packetBuffer[0] = static_cast<std::uint8_t>(OPCodes::SUCCESS_RESPONSE);
+    packetBuffer[1] = static_cast<std::uint8_t>(opCode);
+    memcpy(packetBuffer + 2, message, length);
+
+    this->appCharacteristic->writeValue(packetBuffer, length + 2);
+
+    free(packetBuffer);
+}
+
+void sendResponse(OPCodes responseOpCode, OPCodes opCode, std::uint8_t* message, std::uint16_t length)
+{
+    Serial.println("Prepairing response message");
+
+
 }
