@@ -39,5 +39,8 @@
     <ClInclude Include="__vm\.EKG_CODE_NEW.vsarduino.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="result.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
