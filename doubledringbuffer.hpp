@@ -7,6 +7,14 @@
 const int SINGLE_BUFFER_SIZE = 1000;
 const int DOUBLED_BUFFER_SIZE = SINGLE_BUFFER_SIZE * 2;
 
+/**
+* The usage for this buffer is to store a lot of samples together in order to limit the access to the sd-card as 
+* writing to the sd-card takes quite some time..
+* 
+* The buffer is divided into two sections of equal size
+* 
+* While one section is filled with data the other on can be read and stored to the sdcard
+*/
 template <typename T>
 class DoubledRingBuffer {
 

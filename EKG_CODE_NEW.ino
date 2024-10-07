@@ -1,3 +1,5 @@
+#include <cstring>
+
 #include <SPI.h>
 #include "SdFat.h"
 
@@ -14,12 +16,11 @@
 #include "NRF52_MBED_TimerInterrupt.h"
 #include "NRF52_MBED_ISR_Timer.h"
 
-
 #define TRUE 1
 #define FALSE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD TRUE
+#define USE_SD_CARD FALSE
 
 
 #define SAMPLETIME 5
@@ -27,6 +28,7 @@
 #define HW_TIMER_INTERVAL_MS 1
 #define RINGBUFFERSIZE 500
 
+//Doubled ring buffer which is used to as storage for the 24H ekg
 DoubledRingBuffer<short> LONG_TIME_DOUBLE_BUFFER;
 
 const uint16_t SAADC_RESULT_BUFFER_SIZE = 10;  // Buffer für ADC
@@ -87,13 +89,7 @@ void setup() {
   }
 
   initADC();
-
-  #if USE_SD_CARD
-    initSDCard();
-  #else
-    Serial.println("sd card init skipped!");  
-  #endif
-
+  initSDCard();
   initBLE();
 
    if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler)) {
@@ -143,13 +139,6 @@ void initADC() {
   NRF_SAADC->RESULT.PTR = (uint32_t)SAADC_RESULT_BUFFER;
   NRF_SAADC->RESULT.MAXCNT = SAADC_RESULT_BUFFER_SIZE;
 
-  // Set the END mask to an interrupt: when the result buffer is filled, trigger an interrupt
- // nrf_saadc_int_enable(NRF_SAADC_INT_END);
-  // Enable the STARTED event interrupt, to trigger an interrupt each time the STARTED event happens
-  //nrf_saadc_int_enable(NRF_SAADC_INT_STARTED);
-  // Register the interrupts in NVIC, these functions are declared in core_cm4.h
- //  NVIC_SetPriority(SAADC_IRQn, 3UL);
- //  NVIC_EnableIRQ(SAADC_IRQn);
   nrf_saadc_enable();  // Enable the SAADC
 
   // Calibrate the SAADC by finding its offset
@@ -196,26 +185,6 @@ void timerIRQ() {
   }
 }
 
-/*
-extern "C" {
-   void SAADC_IRQHandler_v() {
-    nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
-    Serial.println("EXTERN C");
-
-
-    for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
-    {
-          ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
-          ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex+1) % RINGBUFFERSIZE;
-    }
-     // ADCbuffer[RINGBUFFERSIZE i] = SAADC_RESULT_BUFFER[i];
-//      ADCbuffer[i] = SAADC_RESULT_BUFFER[i];
-    ADC_buffer_full = 1;
-    nrf_saadc_task_trigger(NRF_SAADC_TASK_START);  // damit die Adresse wieder von vorne hochgezählt wird
-   }
- }
- */
-
 void initBLE() {
   BLE.setLocalName("EKG-Eigner-Code");
   BLE.setAdvertisedService(bleService);
@@ -224,7 +193,6 @@ void initBLE() {
   BLE.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
   BLE.setEventHandler(BLEMtuExchanged, bleOnMTUExchange);
   
-
   // add the characteristic to the service
   bleService.addCharacteristic(Signal);
   bleService.addCharacteristic(BPM_blue);
@@ -233,20 +201,26 @@ void initBLE() {
 
   BLE.addService(bleService);
 
+  //Advertise the device so it can be connected to
   BLE.advertise();
 }
 
+/**
+ * Handler for the BLEConnected event
+ * @param connectedDevice The BLEDevice which is involved in the event 
+*/
 void blePeripheralConnectHandler(BLEDevice connectedDevice) {
   Serial.println("Device connected");
-  //BLE.setConnectable(false);
   BLE.stopAdvertise();
   connectedDevice = connectedDevice;
-
-  //communicationService.setConnectedDevice(connectedDevice);
 
   Serial.println("Stopping advertise");
 }
 
+/**
+ * Handler for the BLEDisconnected event
+ * @param disconnectedDevice The BLEDevice which is involved in the event
+*/
 void blePeripheralDisconnectHandler(BLEDevice disconnectedDevice) {
   Serial.println("Device disconnected");
   //A new device has to enable sending for itsself again
@@ -256,6 +230,10 @@ void blePeripheralDisconnectHandler(BLEDevice disconnectedDevice) {
   Serial.println("Starting to advertise again");
 }
 
+/**
+ * Handler for the BLEMtuExchanged Events
+ * @param ignore The BLEDevice which was involded in this event
+*/
 void bleOnMTUExchange(BLEDevice ignore) {
   Serial.println("MTU-Exchange happened, data can be exchanged now.");
   updateMTUReady = true;
@@ -274,8 +252,17 @@ void updateMTU() {
 }
 
 
+/**
+ * Inits the SD-Card by using the selected CHIP_SELECT_PIN
+*/
 void initSDCard() {
-  Serial.println("Trying to init SD Card");
+#if !USE_SD_CARD
+    //SD-Card should not be init
+    Serial.println("sd card init skipped!");
+    return;
+#endif
+
+  Serial.println("Trying to init SD Card..");
 
   if (!sd.begin(CHIP_SELECT_PIN)) {
     Serial.println("SD Card init failed!");
@@ -289,8 +276,6 @@ unsigned long last_time = 0;
 
 int counter = 0;
 bool send = false;
-
-#include <cstring>
 
 int signal_counter = 0;
 
@@ -309,22 +294,12 @@ void loop() {
   updateMTU();
   
   handleAppCommunication();
-  //Serial.println(analogRead(A2));
-  //delay(5);
   
   if (ADC_buffer_full) {
 
-
       if (Modes::LIVE == currentMode) {
-          // Send everything to the app
-      //Increase the readIndex
-
-          auto delay = current_time - last_time;
-
-          //Serial.println("DELaY " + String(delay));
 
           last_time = current_time;
-
 
           if (BLE.connected() && dataSendingReady) {
 
@@ -376,12 +351,6 @@ void loop() {
 
       }
 
-      
-      
-      
-      
-
-
       ADC_buffer_nextreadindex += SAADC_RESULT_BUFFER_SIZE;
 
       if (ADC_buffer_nextreadindex >= RINGBUFFERSIZE) {
@@ -392,26 +361,13 @@ void loop() {
       ADC_buffer_full = 0;
   }
 
- /*
-  if(BLE.connected() && dataSendingReady && !send) {
-    
-      Serial.println("SENDING DATA");
-      Serial.println(ATT.mtu((connectedDevice)));
-
-      char *msg = "DasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasisteinlabertextBLADasistdasEnde";
-
-      communicationService.sendData(OPCodes::LIST_ECK, reinterpret_cast<uint8_t*>(msg), strlen(msg));
-
-      counter++;
-    
-    send = true;
-    
-  }
-  */
 }
 
 void handleAppCommunication() {
-  if(APP_CHARACTERISITC.written()) {
+    if (!APP_CHARACTERISITC.written()) {
+        //Nothing written do nothing
+        return;
+    }
 
     int length = APP_CHARACTERISITC.valueLength();
 
@@ -432,7 +388,7 @@ void handleAppCommunication() {
     if (it == OPCodes_Mapping.end()) {
         //Not found!
         
-        Serial.println("Unknown Opcode" + String(opCodeByte));
+        Serial.println("Unknown OPcode" + String(opCodeByte));
         return;
     }   
 
@@ -449,6 +405,7 @@ void handleAppCommunication() {
         handleStart24HEKG(buffer,length);
         break;
     case OPCodes::ABORT_24_H_EKG:
+        handleAbortEKG();
         break;
     case OPCodes::DELETE_EKG_FILE:
         handleDeleteEKGFile(buffer, length);
@@ -460,10 +417,28 @@ void handleAppCommunication() {
         break;
     }
 
-
-  }
 }
 
+void handleAbortEKG()
+{
+    if (Modes::EKG_24H != currentMode)
+    {
+        //Current mode is not 24H ekg, do nothing but provide a error response for the app
+        char *error_msg = "EKG not in 24H state!";
+        communicationService.sendErrorResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t *>(error_msg), strlen(error_msg));
+        return;
+    }
+
+    //Change the mode, close the file, write metadata about the file
+    currentMode = Modes::LIVE;
+
+    current_ekg_file.flush();
+    current_ekg_file.close();
+
+    //Everything worked
+    char* success_msg = "24H EKG was aborted successfully!";
+    communicationService.sendSuccessResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
+}
 
 
 /*
@@ -473,16 +448,11 @@ void handleFetchMode()
 {
     Serial.println("Handle fetching current mode");
 
-
     const char current_mode_ordinal = Modes::LIVE == currentMode ? 0 : 1;
 
-  
-    
     communicationService.sendSuccessResponse(OPCodes::FETCH_MODE, reinterpret_cast<std::uint8_t*>(current_mode_ordinal), 1);
 
 }
-
-#include <cstring>
 
 void handleListEKGs()
 {
@@ -533,27 +503,12 @@ void handleStart24HEKG(char *buffer, int lenght) {
         communicationService.sendSuccessResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
         //Reset in case if there is old data
         LONG_TIME_DOUBLE_BUFFER.reset();
-       // writeToFile(fileName);
         current_ekg_file = sd.open(fileName, O_WRITE);
         currentMode = Modes::EKG_24H;
     }
     else {
         communicationService.sendErrorResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
     }
-}
-
-void writeToFile(char *fileName) {
-    Serial.println("WRIETE TO FILE");
-   
-
-    short data = 123;
-    file.write(&data, 1);
-    file.write(&data, 1);
-    file.write(&data, 1);
-    file.write(&data, 1);
-
-    file.flush();
-    //file.close();
 }
 
 
