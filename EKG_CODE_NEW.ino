@@ -25,7 +25,7 @@
 
 #define SAMPLETIME 5
 
-#define HW_TIMER_INTERVAL_MS 1
+#define HW_TIMER_INTERVAL_MS 1000
 #define RINGBUFFERSIZE 500
 
 //Doubled ring buffer which is used to as storage for the 24H ekg
@@ -42,6 +42,8 @@ float autoc[RINGBUFFERSIZE];
 
 //The current mode which the controller is in, alawys start with live mode
 Modes currentMode = Modes::LIVE;
+
+ulong ekg_timer = 0;
 
 std::map<byte, OPCodes> OPCodes_Mapping = {
     {0, OPCodes::NO_OP},
@@ -92,7 +94,7 @@ void setup() {
   initSDCard();
   initBLE();
 
-   if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler)) {
+   if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS, TimerHandler)) {
     Serial.print("Starting ITimer OK, millis() = ");
     Serial.println(millis());
   } else
@@ -162,6 +164,13 @@ void TimerHandler() {
 
 
 void timerIRQ() {
+
+    if (Modes::EKG_24H == currentMode)
+    {
+     //Increase the ekg_timer by the interval which this function gets called
+     ekg_timer += HW_TIMER_INTERVAL_MS;
+     }
+
   if (nrf_saadc_event_check(NRF_SAADC_EVENT_END))  // Buffer full
   {
     nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
@@ -294,6 +303,8 @@ void loop() {
   updateMTU();
   
   handleAppCommunication();
+
+  
   
   if (ADC_buffer_full) {
 
@@ -308,9 +319,8 @@ void loop() {
                   counterEKG = counterEKG - 100;
               }
 
-              short test[10] = {21000,21000,21000,21000,21000,21000,21000,21000,21000,21000};
-              Signal.setValue((byte*)test, 20);
-              //Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
+          
+              Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
               //Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
 
               //for (int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++) {
@@ -363,6 +373,9 @@ void loop() {
 
 }
 
+/**
+* Checks if packets have been received and handles the correct handling of those
+*/
 void handleAppCommunication() {
     if (!APP_CHARACTERISITC.written()) {
         //Nothing written do nothing
@@ -387,7 +400,6 @@ void handleAppCommunication() {
 
     if (it == OPCodes_Mapping.end()) {
         //Not found!
-        
         Serial.println("Unknown OPcode" + String(opCodeByte));
         return;
     }   
@@ -436,7 +448,7 @@ void handleAbortEKG()
     current_ekg_file.close();
 
     //Everything worked
-    char* success_msg = "24H EKG was aborted successfully!";
+    char *success_msg = "24H EKG was aborted successfully!";
     communicationService.sendSuccessResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
 }
 
@@ -448,9 +460,10 @@ void handleFetchMode()
 {
     Serial.println("Handle fetching current mode");
 
-    const char current_mode_ordinal = Modes::LIVE == currentMode ? 0 : 1;
+    //char* current_mode_ordinal = Modes::LIVE == currentMode ? "0" : "1";
 
-    communicationService.sendSuccessResponse(OPCodes::FETCH_MODE, reinterpret_cast<std::uint8_t*>(current_mode_ordinal), 1);
+    char* success_msg = const_cast<char*>((Modes::LIVE == currentMode) ? "0" : "1");
+    communicationService.sendSuccessResponse(OPCodes::FETCH_MODE, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
 
 }
 
@@ -504,6 +517,7 @@ void handleStart24HEKG(char *buffer, int lenght) {
         //Reset in case if there is old data
         LONG_TIME_DOUBLE_BUFFER.reset();
         current_ekg_file = sd.open(fileName, O_WRITE);
+        ekg_timer = 0;
         currentMode = Modes::EKG_24H;
     }
     else {

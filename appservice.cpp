@@ -9,8 +9,7 @@ Result AppService::createFile(char* fileName)
     if (sd.exists(fileName)) {
         //File already exists
         Serial.println("File already exists!");
-        return Result::Error("File already exists!");
-        
+        return Result::Error("File already exists!"); 
     }
 
     FsFile file = this->sd.open(fileName, O_CREAT | O_WRITE);

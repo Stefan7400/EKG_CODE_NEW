@@ -56,6 +56,7 @@ void CommunicationService::sendSuccessResponse(OPCodes opCode, const std::uint8_
     packetBuffer[0] = static_cast<std::uint8_t>(OPCodes::SUCCESS_RESPONSE);
     packetBuffer[1] = static_cast<std::uint8_t>(opCode);
     memcpy(packetBuffer + 2, message, length);
+    Serial.println("Laenge: " + String(length));
 
     this->appCharacteristic->writeValue(packetBuffer, length + 2);
 
