@@ -33,7 +33,7 @@ public:
     }
 
 private:
-    // Private constructor
+    
     Result(bool is_ok, const std::string& message)
         : is_ok_(is_ok), message_(message) {}
 

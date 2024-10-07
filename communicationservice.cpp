@@ -42,6 +42,7 @@ void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uin
     currentDataPos += payloadSize;
 
     free(packetBuffer);
+    //delay to make sure the other packets get send
     delay(100);
   }
 }

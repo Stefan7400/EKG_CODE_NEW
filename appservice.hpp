@@ -2,6 +2,7 @@
 #define SERVICE_HPP
 
 #include <ArduinoBLE.h>
+#include <utility>
 #include "utility/ATT.h"
 
 #include "SdFat.h"
@@ -16,15 +17,11 @@ private:
 public:
     AppService(SdFs& sd);
 
-
     Result createFile(char* fileName);
 
     Result deleteFile(char* fileName);
 
-
-    
-
-
+    String listEKGFiles();
 };
 
 #endif

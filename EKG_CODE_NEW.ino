@@ -9,6 +9,7 @@
 #include "opcodes.h"
 #include "modes.h"
 #include "result.h"
+#include "doubledringbuffer.hpp"
 
 #include "NRF52_MBED_TimerInterrupt.h"
 #include "NRF52_MBED_ISR_Timer.h"
@@ -25,6 +26,8 @@
 
 #define HW_TIMER_INTERVAL_MS 1
 #define RINGBUFFERSIZE 500
+
+DoubledRingBuffer<short> LONG_TIME_DOUBLE_BUFFER;
 
 const uint16_t SAADC_RESULT_BUFFER_SIZE = 10;  // Buffer für ADC
 volatile nrf_saadc_value_t SAADC_RESULT_BUFFER[SAADC_RESULT_BUFFER_SIZE];
@@ -43,7 +46,8 @@ std::map<byte, OPCodes> OPCodes_Mapping = {
     {1, OPCodes::LIST_EKG},
     {2, OPCodes::START_24H_EKG},
     {3, OPCodes::ABORT_24_H_EKG},
-    {6, OPCodes::DELETE_EKG_FILE}
+    {6, OPCodes::DELETE_EKG_FILE},
+    {7, OPCodes::FETCH_MODE}
 
 };
 
@@ -78,6 +82,7 @@ void setup() {
 
   // Wait for USB Serial
   while (!Serial) {
+      //TODO weg wenn nicht von usb gepowered
     yield();
   }
 
@@ -123,7 +128,7 @@ void initADC() {
     .acq_time = NRF_SAADC_ACQTIME_10US,
     .mode = NRF_SAADC_MODE_SINGLE_ENDED,
     .burst = NRF_SAADC_BURST_DISABLED,
-    .pin_p = NRF_SAADC_INPUT_AIN6,  // Pin A2
+    .pin_p = NRF_SAADC_INPUT_AIN6,  
     .pin_n = NRF_SAADC_INPUT_DISABLED
   };
 
@@ -132,7 +137,7 @@ void initADC() {
   nrf_saadc_resolution_set(NRF_SAADC_RESOLUTION_12BIT);     // Configure the resolution
   nrf_saadc_oversample_set(NRF_SAADC_OVERSAMPLE_256X);  //Enable oversampling
 
-  NRF_SAADC->SAMPLERATE = (SAADC_SAMPLERATE_MODE_Timers << SAADC_SAMPLERATE_MODE_Pos)| ((uint32_t)500 << SAADC_SAMPLERATE_CC_Pos);
+  NRF_SAADC->SAMPLERATE = (SAADC_SAMPLERATE_MODE_Timers << SAADC_SAMPLERATE_MODE_Pos)| ((uint32_t)249 << SAADC_SAMPLERATE_CC_Pos);
 
   // Configure RESULT Buffer and MAXCNT
   NRF_SAADC->RESULT.PTR = (uint32_t)SAADC_RESULT_BUFFER;
@@ -176,6 +181,7 @@ void timerIRQ() {
     {
       ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
       ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex+1) % RINGBUFFERSIZE;
+      LONG_TIME_DOUBLE_BUFFER.write(SAADC_RESULT_BUFFER[i]);
     }
 
     ADC_buffer_full = 1;
@@ -190,10 +196,12 @@ void timerIRQ() {
   }
 }
 
+/*
 extern "C" {
    void SAADC_IRQHandler_v() {
     nrf_saadc_event_clear(NRF_SAADC_EVENT_END);  // Clear the END event
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    Serial.println("EXTERN C");
+
 
     for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
     {
@@ -206,6 +214,7 @@ extern "C" {
     nrf_saadc_task_trigger(NRF_SAADC_TASK_START);  // damit die Adresse wieder von vorne hochgezählt wird
    }
  }
+ */
 
 void initBLE() {
   BLE.setLocalName("EKG-Eigner-Code");
@@ -225,8 +234,6 @@ void initBLE() {
   BLE.addService(bleService);
 
   BLE.advertise();
-  //TODO Change to -1 und dann counter neu testen ob jz das erste 0 packet ankommt!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  APP_CHARACTERISITC.writeValue(static_cast<uint8_t>(0));
 }
 
 void blePeripheralConnectHandler(BLEDevice connectedDevice) {
@@ -245,10 +252,7 @@ void blePeripheralDisconnectHandler(BLEDevice disconnectedDevice) {
   //A new device has to enable sending for itsself again
   dataSendingReady = false;
 
-  //communicationService.setConnectedDevice(NULL);
-
   BLE.advertise();
-  //BLE.setConnectable(true);
   Serial.println("Starting to advertise again");
 }
 
@@ -288,7 +292,14 @@ bool send = false;
 
 #include <cstring>
 
-int counter_2 = 0;
+int signal_counter = 0;
+
+FsFile current_ekg_file;
+
+bool shouldWrite = true;
+long timeToWrite = 0;
+
+int counterEKG = 1;
 
 void loop() {
   
@@ -298,41 +309,77 @@ void loop() {
   updateMTU();
   
   handleAppCommunication();
-  //Serial.print("ANALOG: ");
-  //Serial.println(analogRead(A0));
-  //delay(500);
-  /*
-  if(current_time - last_time > 5000) {
-      Serial.println("TEST");
-      Serial.print("MTU: in loop: ");
-      Serial.println(ATT.mtu((connectedDevice)));
-      Serial.print("ADRESSSE IN LOOP: ");
-      Serial.println((uintptr_t)&APP_CHARACTERISITC, HEX);
-
-      
-      last_time = current_time;
-  }
-  */
-//&& !send && dataSendingReady
+  //Serial.println(analogRead(A2));
+  //delay(5);
+  
   if (ADC_buffer_full) {
-      // Send everything to the app
+
+
+      if (Modes::LIVE == currentMode) {
+          // Send everything to the app
       //Increase the readIndex
-       
-      auto delay = current_time - last_time;
-      //Serial.println(String(delay));
 
-      last_time = current_time;
-      
+          auto delay = current_time - last_time;
 
-      if(BLE.connected() && dataSendingReady){
-        //Serial.println("FIRST FLOAT: " + String(ADCbuffer[ADC_buffer_nextreadindex]));
-        //Serial.println("SECOND FLOAT: " + String(ADCbuffer[ADC_buffer_nextreadindex+1]));
-        //Serial.println("TIME ELAPSED: " + String(current_time - last_time));
+          //Serial.println("DELaY " + String(delay));
 
-        Signal.setValue((byte*) &(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
-        //Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
+          last_time = current_time;
+
+
+          if (BLE.connected() && dataSendingReady) {
+
+              if (counterEKG > 0) {
+                  Serial.println("FISRT DATA: " + String(ADCbuffer[ADC_buffer_nextreadindex]));
+                  counterEKG = counterEKG - 100;
+              }
+
+              short test[10] = {21000,21000,21000,21000,21000,21000,21000,21000,21000,21000};
+              Signal.setValue((byte*)test, 20);
+              //Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
+              //Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
+
+              //for (int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++) {
+              //    Serial.print(String(ADCbuffer[ADC_buffer_nextreadindex + i]) + " ");
+              //}
+             // Serial.println();
+          }
+      }
+
+      if (Modes::EKG_24H == currentMode) {
+          if (LONG_TIME_DOUBLE_BUFFER.isReadable()) {
+              // Is readable write it to the sd card
+
+              short *readIndex = LONG_TIME_DOUBLE_BUFFER.readIndex();
+
+              if (counterEKG > 0) {
+                  timeToWrite = millis();
+                  current_ekg_file.write(readIndex, SINGLE_BUFFER_SIZE * 2);
+                  current_ekg_file.flush();
+
+                  Serial.println("First Data: ");
+
+                  for (int i = 0; i < 10; i++) {
+                      Serial.println(String(readIndex[i]));
+                  }
+                  
+                  shouldWrite = false;
+                  counterEKG = counterEKG - 40;
+                  Serial.println("Wrote to ekg file in: " + String(millis() - timeToWrite));
+              }
+              else {
+                  current_ekg_file.close();
+              }
+
+
+              LONG_TIME_DOUBLE_BUFFER.readDone();
+          }
 
       }
+
+      
+      
+      
+      
 
 
       ADC_buffer_nextreadindex += SAADC_RESULT_BUFFER_SIZE;
@@ -406,6 +453,9 @@ void handleAppCommunication() {
     case OPCodes::DELETE_EKG_FILE:
         handleDeleteEKGFile(buffer, length);
         break;
+    case OPCodes::FETCH_MODE:
+        handleFetchMode();
+        break;
     default:
         break;
     }
@@ -415,39 +465,65 @@ void handleAppCommunication() {
 }
 
 
+
+/*
+ * 
+*/
+void handleFetchMode()
+{
+    Serial.println("Handle fetching current mode");
+
+
+    const char current_mode_ordinal = Modes::LIVE == currentMode ? 0 : 1;
+
+  
+    
+    communicationService.sendSuccessResponse(OPCodes::FETCH_MODE, reinterpret_cast<std::uint8_t*>(current_mode_ordinal), 1);
+
+}
+
 #include <cstring>
 
 void handleListEKGs()
 {
-    Serial.println("LIST EKGS RECEIVED");
-    char *EKGS = "ASD;ANOTHER;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA;BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB;CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC;DDDDDDDDDDDDDDDDDDDDDDD;E;DDDDDDDDDDDDDDDDDDDDDDDDD;FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG;HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH;ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    Serial.println("Handle list EKGs");
+
+    String data = appSerivce.listEKGFiles();
+    char EKGS[data.length() + 1];
+    data.toCharArray(EKGS, sizeof(EKGS));
+
     communicationService.sendData(OPCodes::LIST_EKG, reinterpret_cast<std::uint8_t*>(EKGS) , strlen(EKGS));
 }
 
 void handleDeleteEKGFile(char* buffer, int lenght) {
-    char fileName[lenght];
+    char fileName[lenght+4];
     memcpy(fileName, &buffer[1], lenght - 1);
-    fileName[lenght - 1] = '\0';
+    //Add the .bin extension
+    memcpy(&fileName[lenght - 1], ".bin", 4);
+    fileName[lenght + 3] = '\0';
 
     Result result = appSerivce.deleteFile(fileName);
 
     if (result.is_ok()) {
-        communicationService.sendSuccessResponse(OPCodes::SUCCESS_RESPONSE, result.message(), result.message_length());
+        communicationService.sendSuccessResponse(OPCodes::DELETE_EKG_FILE, result.message(), result.message_length());
     }
     else {
-        communicationService.sendErrorResponse(OPCodes::SUCCESS_RESPONSE, result.message(), result.message_length());
+        communicationService.sendErrorResponse(OPCodes::DELETE_EKG_FILE, result.message(), result.message_length());
     }
 }
 
 void handleStart24HEKG(char *buffer, int lenght) {
     //Filename has the length of the send data because -1 byte (for the opcode) + 1 byte for the \0 terminator
-    char fileName[lenght];
+    //Add 4 for ".bin"
+    char fileName[lenght+4];
 
     //Subtract bc the \0 terminator is not in the buffer 
     memcpy(fileName, &buffer[1], lenght - 1);
 
+    //Add the .bin extension
+    memcpy(&fileName[lenght-1], ".bin", 4);
     //Add the \0 terminator
-    fileName[lenght - 1] = '\0';
+    fileName[lenght + 3] = '\0';
 
     Serial.println("FILENAME " + String(fileName));
 
@@ -455,10 +531,29 @@ void handleStart24HEKG(char *buffer, int lenght) {
 
     if (result.is_ok()) {
         communicationService.sendSuccessResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
+        //Reset in case if there is old data
+        LONG_TIME_DOUBLE_BUFFER.reset();
+       // writeToFile(fileName);
+        current_ekg_file = sd.open(fileName, O_WRITE);
+        currentMode = Modes::EKG_24H;
     }
     else {
         communicationService.sendErrorResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
     }
+}
+
+void writeToFile(char *fileName) {
+    Serial.println("WRIETE TO FILE");
+   
+
+    short data = 123;
+    file.write(&data, 1);
+    file.write(&data, 1);
+    file.write(&data, 1);
+    file.write(&data, 1);
+
+    file.flush();
+    //file.close();
 }
 
 
