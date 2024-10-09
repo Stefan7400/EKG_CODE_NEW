@@ -85,10 +85,11 @@ void setup() {
   }
 
   // Wait for USB Serial
-  while (!Serial) {
+  //while (!Serial) {
       //TODO weg wenn nicht von usb gepowered
-    yield();
-  }
+    //yield();
+  //    delay(1000);
+ // }
 
   initADC();
   initSDCard();
@@ -314,10 +315,10 @@ void loop() {
 
           if (BLE.connected() && dataSendingReady) {
 
-              if (counterEKG > 0) {
-                  Serial.println("FISRT DATA: " + String(ADCbuffer[ADC_buffer_nextreadindex]));
-                  counterEKG = counterEKG - 100;
-              }
+              //if (counterEKG > 0) {
+              //    Serial.println("FISRT DATA: " + String(ADCbuffer[ADC_buffer_nextreadindex]));
+              //    counterEKG = counterEKG - 100;
+              //}
 
           
               Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
