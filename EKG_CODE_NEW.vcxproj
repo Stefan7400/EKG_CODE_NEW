@@ -104,6 +104,7 @@
     </ClCompile>
     <ClInclude Include="doubledringbuffer.hpp" />
     <ClInclude Include="result.h" />
+    <ClInclude Include="string_utils.hpp" />
     <ClInclude Include="__vm\.EKG_CODE_NEW.vsarduino.h" />
   </ItemGroup>
   <PropertyGroup>
