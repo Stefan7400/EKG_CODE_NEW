@@ -21,10 +21,10 @@
 #define FALSE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD FALSE
+#define USE_SD_CARD TRUE
 
 //If serial should be used (for print)
-#define USE_SERIAL FALSE
+#define USE_SERIAL TRUE
 
 //24H in ms
 #define FULL_EKG_TIME = 86400000
@@ -50,9 +50,9 @@ float autoc[RINGBUFFERSIZE];
 //The current mode which the controller is in, alawys start with live mode
 Modes currentMode = Modes::LIVE;
 
-ulong ekg_timer = 0;
+unsigned long long ekg_timer = 0;
 //Use -1 as default which marks it as null state
-ulong ekg_start_time_ms = -1;
+unsigned long long ekg_start_time_ms = -1;
 
 std::map<byte, OPCodes> OPCodes_Mapping = {
 	{0, OPCodes::NO_OP},
@@ -172,7 +172,7 @@ void TimerHandler() {
 
 
 void timerIRQ() {
-
+	
 	if (Modes::EKG_24H == currentMode)
 	{
 		//Increase the ekg_timer by the interval which this function gets called
@@ -316,6 +316,7 @@ long timeToWrite = 0;
 int counterEKG = 1;
 
 void loop() {
+	BLE.poll();
 
 	// put your main code here, to run repeatedly:
 	unsigned long current_time = millis();
@@ -330,7 +331,6 @@ void loop() {
 
 
 		if (Modes::LIVE == currentMode) {
-
 			last_time = current_time;
 
 			if (BLE.connected() && dataSendingReady) {
@@ -354,6 +354,7 @@ void loop() {
 			}
 		}
 
+		
 		if (Modes::EKG_24H == currentMode) {
 			if (LONG_TIME_DOUBLE_BUFFER.isReadable()) {
 				// Is readable write it to the sd card
@@ -378,6 +379,7 @@ void loop() {
 
 			LONG_TIME_DOUBLE_BUFFER.readDone();
 		}
+		
 
 	}
 
@@ -443,7 +445,6 @@ void handleAppCommunication() {
 
 		size_t delimiter_index = delimiter_at_index(&buffer[1]);
 
-		//50 is max for the filename (even 20)
 		char file_name[delimiter_index + 5];
 		fill_buffer_with_null_terminator(file_name, delimiter_index + 5);
 		//The current start time of the ecg in ms (send by the app)
@@ -485,15 +486,36 @@ void handleAbortEKG()
 		return;
 	}
 
+	end_24h_ekg(true);
+}
+
+void end_24h_ekg() {
+	end_24h_ekg(false);
+}
+
+void end_24h_ekg(bool aborted)
+{
 	//Change the mode, close the file, write metadata about the file
 	currentMode = Modes::LIVE;
 
 	current_ekg_file.flush();
+
+	char file_name[50];
+	current_ekg_file.getName(file_name, 50);
+
 	current_ekg_file.close();
 
-	//Everything worked
-	char* success_msg = "24H EKG was aborted successfully!";
-	communicationService.sendSuccessResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
+	if (abort)
+	{
+		//Everything worked
+		char* success_msg = "24H EKG was aborted successfully!";
+		communicationService.sendSuccessResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
+	}	
+}
+
+void create_meta_file(char *file_name)
+{
+
 }
 
 
@@ -539,6 +561,8 @@ void handleDeleteEKGFile(char* buffer, int lenght) {
 	}
 }
 
+#include <stdlib.h>
+
 void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 	
 
@@ -548,12 +572,16 @@ void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 
 	if (result.is_ok())
 	{
-		communicationService.sendSuccessResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
 		//Reset in case if there is old data
 		LONG_TIME_DOUBLE_BUFFER.reset();
 		current_ekg_file = sd.open(file_name, O_WRITE);
 		ekg_timer = 0;
+		ekg_start_time_ms = strtoull(start_time_as_str, nullptr, 10);
+		Serial.print("Start time: ");
+		Serial.println(ekg_start_time_ms);
 		currentMode = Modes::EKG_24H;
+
+		communicationService.sendSuccessResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
 	}
 	else
 	{
