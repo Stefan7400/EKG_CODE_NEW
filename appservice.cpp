@@ -4,7 +4,7 @@ AppService::AppService(SdFs& sd) : sd(sd) {
     
 }
 
-Result AppService::createFile(char* fileName)
+Result AppService::create_ecg_file(char* fileName)
 {
     if (sd.exists(fileName)) {
         //File already exists
@@ -26,7 +26,7 @@ Result AppService::createFile(char* fileName)
     return Result::Ok("Successfully created file!");
 }
 
-Result AppService::deleteFile(char* fileName)
+Result AppService::delete_ecg_file(char* fileName)
 {
     if (!sd.exists(fileName)) {
         //File already exists
@@ -40,7 +40,7 @@ Result AppService::deleteFile(char* fileName)
     return Result::Ok("File deleted successfully!");
 }
 
-String AppService::listEKGFiles()
+String AppService::list_ecg_files()
 {
 
     Serial.println("START LISTING EKGs");

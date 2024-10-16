@@ -17,11 +17,23 @@ private:
 public:
     AppService(SdFs& sd);
 
-    Result createFile(char* fileName);
+    /**
+    * Creates the binary file for the ecg
+    * @param file_name The provided name for the ecg file
+    */
+    Result create_ecg_file(char* file_name);
 
-    Result deleteFile(char* fileName);
-
-    String listEKGFiles();
+    /**
+    * Deletes a file which matches the provided file_name
+    * @param file_name the provided file_name
+    */
+    Result delete_ecg_file(char* file_name);
+    
+    /**
+    * Returns a string containing all the available ecgs seperated by a ';'
+    * @return The created string
+    */
+    String list_ecg_files();
 };
 
 #endif

@@ -55,6 +55,10 @@ public:
     void setMTU(std::uint16_t mtu) {
       this->mtu = mtu;
     }
+
+    std::uint16_t get_mtu() {
+        return this->mtu;
+    }
 };
 
 

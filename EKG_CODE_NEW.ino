@@ -1,4 +1,5 @@
 #include <cstring>
+#include <stdlib.h>
 
 #include <SPI.h>
 #include "SdFat.h"
@@ -60,7 +61,7 @@ std::map<byte, OPCodes> OPCodes_Mapping = {
 	{2, OPCodes::START_24H_EKG},
 	{3, OPCodes::ABORT_24_H_EKG},
 	{6, OPCodes::DELETE_EKG_FILE},
-	{7, OPCodes::FETCH_MODE}
+	{7, OPCodes::FETCH_MODE},
 
 };
 
@@ -88,8 +89,6 @@ void setup() {
 
 	SPI.begin();
 
-	
-
 	if (!BLE.begin()) {
 		Serial.println("BLE init failed!");
 		while (1);
@@ -97,9 +96,9 @@ void setup() {
 
 
 	init_serial();
-	initADC();
-	initSDCard();
-	initBLE();
+	init_adc();
+	init_sd_card();
+	init_ble();
 
 	if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS, TimerHandler)) {
 		Serial.print("Starting ITimer OK, millis() = ");
@@ -109,7 +108,6 @@ void setup() {
 		Serial.println("Can't set ITimer. Select another freq. or timer");
 
 	ISR_Timer.setInterval(SAMPLETIME, timerIRQ);
-
 }
 
 BLEService bleService("e28e00e9-b79a-479a-a6f1-21e8f73236e1");
@@ -122,7 +120,7 @@ BLECharacteristic APP_CHARACTERISITC("563a2846-1dc7-11ef-9262-0242ac120002", BLE
 CommunicationService communicationService(&APP_CHARACTERISITC);
 AppService appSerivce(sd);
 
-void initADC() {
+void init_adc() {
 	// Disable the SAADC during configuration
 	nrf_saadc_disable();
 	// Configure A2 in single ended mode
@@ -131,7 +129,7 @@ void initADC() {
 	  .resistor_n = NRF_SAADC_RESISTOR_DISABLED,
 	  .gain = NRF_SAADC_GAIN1_6,
 	  .reference = NRF_SAADC_REFERENCE_INTERNAL,
-	  .acq_time = NRF_SAADC_ACQTIME_10US,//NRF_SAADC_ACQTIME_10US,
+	  .acq_time = NRF_SAADC_ACQTIME_10US,
 	  .mode = NRF_SAADC_MODE_SINGLE_ENDED,
 	  .burst = NRF_SAADC_BURST_DISABLED,
 	  .pin_p = NRF_SAADC_INPUT_AIN6,
@@ -202,8 +200,8 @@ void timerIRQ() {
 	}
 }
 
-void initBLE() {
-	BLE.setLocalName("EKG-Eigner-Code");
+void init_ble() {
+	BLE.setLocalName("THI-EKG");
 	BLE.setAdvertisedService(bleService);
 	//Register handler
 	BLE.setEventHandler(BLEConnected, blePeripheralConnectHandler);
@@ -285,7 +283,7 @@ void init_serial()
 /**
  * Inits the SD-Card by using the selected CHIP_SELECT_PIN
 */
-void initSDCard() {
+void init_sd_card() {
 #if !USE_SD_CARD
 	//SD-Card should not be init
 	Serial.println("sd card init skipped!");
@@ -505,31 +503,73 @@ void end_24h_ekg(bool aborted)
 
 	current_ekg_file.close();
 
-	if (abort)
+	if (aborted)
 	{
 		//Everything worked
 		char* success_msg = "24H EKG was aborted successfully!";
 		communicationService.sendSuccessResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
-	}	
+	}
+
+	create_meta_file(file_name, aborted);
 }
 
-void create_meta_file(char *file_name)
-{
 
+const String META_FILE_ECG_START = "start_time";
+const String META_FILE_ECG_END = "end_time";
+const String META_FILE_ECG_WAS_ABORTED = "aborted";
+
+#include <stdlib.h>
+
+/**
+ * Creates the mata file for the ended ecg
+ * @param ecg_file_name The filename of the recorded ecg
+ * @param was_aborted If the ecg recording has been aborted (ended prematurely)
+*/
+void create_meta_file(char *ecg_file_name, const bool was_aborted)
+{
+	const size_t file_name_length = strlen(ecg_file_name);
+	char meta_file_name[file_name_length];
+	//Change the extension to txt
+	memcpy(&meta_file_name[file_name_length-3],"txt", 3);
+
+	if (sd.exists(meta_file_name))
+	{
+		//Should not happen
+		Serial.println("Meta-File already exists, this should not happen!");
+		return;
+	}
+
+	FsFile meta_file = sd.open(meta_file_name, O_CREAT | O_WRITE);
+
+	if (!file) {
+		//Error creating the file
+		Serial.println("Error while creating or opening file");
+		return;
+	}
+	//add the start time
+	String start_time_data = META_FILE_ECG_START + ":" + ullToString(ekg_start_time_ms) + DELIMITER;
+	file.write(start_time_data.c_str(), start_time_data.length());
+	//Add the end time
+	String end_time_data = META_FILE_ECG_END + ":" + ullToString(ekg_timer) + DELIMITER;
+	file.write(end_time_data.c_str(), end_time_data.length());
+	//Add if its was aborted
+	String was_aborted_data = META_FILE_ECG_WAS_ABORTED + ":" + bool_to_string(was_aborted) + DELIMITER;
+	file.write(was_aborted_data.c_str(), was_aborted_data.length());
+
+	meta_file.flush();
+	meta_file.close();
 }
 
 
 /*
- *
+ * Handles the fetch mode request, sends a response to the application
 */
 void handleFetchMode()
 {
 	Serial.println("Handle fetching current mode");
 
-	//char* current_mode_ordinal = Modes::LIVE == currentMode ? "0" : "1";
-
-	char* success_msg = const_cast<char*>((Modes::LIVE == currentMode) ? "0" : "1");
-	communicationService.sendSuccessResponse(OPCodes::FETCH_MODE, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
+	const std::uint8_t success_msg = (Modes::LIVE == currentMode) ? 0 : 1;
+	communicationService.sendSuccessResponse(OPCodes::FETCH_MODE, &success_msg, 1);
 
 }
 
@@ -537,7 +577,7 @@ void handleListEKGs()
 {
 	Serial.println("Handle list EKGs");
 
-	String data = appSerivce.listEKGFiles();
+	String data = appSerivce.list_ecg_files();
 	char EKGS[data.length() + 1];
 	data.toCharArray(EKGS, sizeof(EKGS));
 
@@ -551,7 +591,7 @@ void handleDeleteEKGFile(char* buffer, int lenght) {
 	memcpy(&fileName[lenght - 1], ".bin", 4);
 	fileName[lenght + 3] = '\0';
 
-	Result result = appSerivce.deleteFile(fileName);
+	Result result = appSerivce.delete_ecg_file(fileName);
 
 	if (result.is_ok()) {
 		communicationService.sendSuccessResponse(OPCodes::DELETE_EKG_FILE, result.message(), result.message_length());
@@ -561,14 +601,12 @@ void handleDeleteEKGFile(char* buffer, int lenght) {
 	}
 }
 
-#include <stdlib.h>
-
 void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 	
 
 	Serial.println("FILENAME " + String(file_name));
 
-	Result result = appSerivce.createFile(file_name);
+	Result result = appSerivce.create_ecg_file(file_name);
 
 	if (result.is_ok())
 	{
@@ -587,6 +625,44 @@ void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 	{
 		communicationService.sendErrorResponse(OPCodes::START_24H_EKG, result.message(), result.message_length());
 	}
+}
+
+void upload_ecg()
+{
+	if (!sd.exists("data.bin")) {
+		//File already exists
+		Serial.println("File does not exists!");
+		return;
+	}
+
+	FsFile file = sd.open("data.bin", O_READ);
+
+	if (!file)
+	{
+		Serial.println("Failed to open file for upload");
+		return;
+	}
+
+	const int needed_packets = file.fileSize() / communicationService.get_mtu();
+
+	Serial.println("Needed packets " + String(needed_packets) + " for mtu: " + String(communicationService.get_mtu()));
+
+	const size_t buffer_size = communicationService.get_mtu() - 3;
+
+	while (1)
+	{
+		std::uint8_t buffer[buffer_size];
+		int read_bytes = file.readBytes(buffer, buffer_size);
+		BLE.poll();
+		delay(100);
+
+		//TODO handle app comm. bc maybe the app wants to abort the upload
+	}
+
+	
+
+
+
 }
 
 

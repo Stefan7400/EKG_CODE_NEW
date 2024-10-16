@@ -58,4 +58,30 @@ inline void fill_buffer_with_null_terminator(char* buffer, size_t length)
 	}
 }
 
+String bool_to_string(const bool boolean)
+{
+	return boolean ? String("true") : String("false");
+}
+
+String ullToString(unsigned long long value) {
+	char buffer[21]; // Max digits for unsigned long long is 20 + 1 for '\0'
+	int index = 20;  // Start from the end of the buffer
+	buffer[index--] = '\0'; // Null-terminate the string
+
+	// Handle zero explicitly
+	if (value == 0) {
+		buffer[index--] = '0';
+	}
+	else {
+		// Convert each digit to a character
+		while (value > 0 && index >= 0) {
+			buffer[index--] = '0' + (value % 10);
+			value /= 10;
+		}
+	}
+
+	// Return the string starting from the first non-empty character
+	return String(&buffer[index + 1]);
+}
+
 #endif
