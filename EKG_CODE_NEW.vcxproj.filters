@@ -48,5 +48,8 @@
     <ClInclude Include="string_utils.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="pan_tompkins.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
