@@ -28,22 +28,22 @@
 #define FALSE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD FALSE
+#define USE_SD_CARD TRUE
 
 //If serial should be used (for print debug messages)
-#define USE_SERIAL FALSE
+#define USE_SERIAL TRUE
 
 //If the battery should be init (needed for battery status)
 #define USE_BATTERY FALSE
-
-//24H in ms
-#define FULL_EKG_TIME = 60000 //86400000
 
 
 #define SAMPLETIME 5
 
 #define HW_TIMER_INTERVAL_MS 1000
 #define RINGBUFFERSIZE 500
+
+//24H in ms
+const int FULL_EKG_TIME = 70000; //86400000
 
 //Doubled ring buffer which is used to as storage for the 24H ekg
 DoubledRingBuffer<short> LONG_TIME_DOUBLE_BUFFER;
@@ -73,7 +73,6 @@ std::map<byte, OPCodes> OPCodes_Mapping = {
 	{3, OPCodes::ABORT_24_H_EKG},
 	{6, OPCodes::DELETE_EKG_FILE},
 	{7, OPCodes::FETCH_MODE},
-
 };
 
 // Init NRF52 timer NRF_TIMER3
@@ -82,6 +81,8 @@ NRF52_MBED_Timer ITimer(NRF_TIMER_3);
 // Init NRF52_MBED_ISRTimer
 // Each NRF52_MBED_ISRTimer can service 16 different ISR-based timers
 NRF52_MBED_ISRTimer ISR_Timer;
+
+char current_ecg_filename[50];
 
 SdFs sd;
 FsFile file;
@@ -151,20 +152,17 @@ void init_adc() {
 	  .pin_n = NRF_SAADC_INPUT_DISABLED
 	};
 
-	// initialize the SAADC channel by calling the hal function, declared in nrf_saadc.h
-	nrf_saadc_channel_init(1, &channel_config);               // use channel 1
-	nrf_saadc_resolution_set(NRF_SAADC_RESOLUTION_12BIT);     // Configure the resolution
-	nrf_saadc_oversample_set(NRF_SAADC_OVERSAMPLE_256X);  //Enable oversampling
+	nrf_saadc_channel_init(1, &channel_config); 
+	nrf_saadc_resolution_set(NRF_SAADC_RESOLUTION_12BIT);
+	nrf_saadc_oversample_set(NRF_SAADC_OVERSAMPLE_256X);
 
 	NRF_SAADC->SAMPLERATE = (SAADC_SAMPLERATE_MODE_Timers << SAADC_SAMPLERATE_MODE_Pos) | ((uint32_t)500 << SAADC_SAMPLERATE_CC_Pos);
 
-	// Configure RESULT Buffer and MAXCNT
 	NRF_SAADC->RESULT.PTR = (uint32_t)SAADC_RESULT_BUFFER;
 	NRF_SAADC->RESULT.MAXCNT = SAADC_RESULT_BUFFER_SIZE;
 
-	nrf_saadc_enable();  // Enable the SAADC
+	nrf_saadc_enable();
 
-	// Calibrate the SAADC by finding its offset
 	NRF_SAADC->TASKS_CALIBRATEOFFSET = 1;
 	while (NRF_SAADC->EVENTS_CALIBRATEDONE == 0)
 		;
@@ -173,9 +171,9 @@ void init_adc() {
 		;
 	Serial.println("Finished SAADC Configuration");
 
-	nrf_saadc_task_trigger(NRF_SAADC_TASK_START);   // Zieladresse zürücksetzen
-	delay(5);                                       // Allow some time for the START task to trigger
-	// Trigger the SAMPLE task
+	nrf_saadc_task_trigger(NRF_SAADC_TASK_START); 
+	delay(5); 
+
 	nrf_saadc_task_trigger(NRF_SAADC_TASK_SAMPLE);
 }
 
@@ -183,25 +181,37 @@ void TimerHandler() {
 	ISR_Timer.run();
 }
 
+volatile int test_data_read_index = 0;
+
 
 void timerIRQ() {
 	
 	if (Modes::EKG_24H == currentMode)
 	{
 		//Increase the ekg_timer by the interval which this function gets called
-		ekg_timer += HW_TIMER_INTERVAL_MS;
+		ekg_timer += SAMPLETIME;
 	}
 
 	if (nrf_saadc_event_check(NRF_SAADC_EVENT_END))
 	{
 		nrf_saadc_event_clear(NRF_SAADC_EVENT_END); 
 
+		/*
 		for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
 		{
 			ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
 			ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex + 1) % RINGBUFFERSIZE;
-			//LONG_TIME_DOUBLE_BUFFER.write(SAADC_RESULT_BUFFER[i]);
+			LONG_TIME_DOUBLE_BUFFER.write(SAADC_RESULT_BUFFER[i]);
+			
+		}*/
+
+		for (unsigned int i = 0; i < 10; i++)
+		{
+			LONG_TIME_DOUBLE_BUFFER.write(testdata[test_data_read_index]);
+
+			test_data_read_index = (test_data_read_index + 1) % 7500;
 		}
+		
 
 		ADC_buffer_full = 1;
 		nrf_saadc_task_trigger(NRF_SAADC_TASK_START);
@@ -335,7 +345,6 @@ unsigned long last_time = 0;
 int counter = 0;
 bool send = false;
 
-int signal_counter = 0;
 
 FsFile current_ekg_file;
 FsFile current_bpm_file;
@@ -372,39 +381,37 @@ void loop() {
 
 			if (BLE.connected() && dataSendingReady) {
 
-				//if (counterEKG > 0) {
-				//    Serial.println("FISRT DATA: " + String(ADCbuffer[ADC_buffer_nextreadindex]));
-				//    counterEKG = counterEKG - 100;
-				//}
-
 				Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
 				//Signal.setValue((byte*)&(testdata[test_data_index]), 20);
 				//Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
-
-			
-				counter++;
-
 			}
 		}
 
 		
 		if (Modes::EKG_24H == currentMode) {
+
 			if (LONG_TIME_DOUBLE_BUFFER.isReadable()) {
 				// Is readable write it to the sd card
-
+				timeToWrite = millis();
 				if (!current_ekg_file.isOpen()) {
+					Serial.println("Opening current ecg file..");
 					//open it if needed
-					char currentFileName[50];
-					current_ekg_file.getName(currentFileName,50);
-					current_ekg_file = sd.open(currentFileName, O_WRITE);
+					//char currentFileName[50];
+					//current_ekg_file.getName(currentFileName,50);
+					current_ekg_file = sd.open(current_ecg_filename, FILE_WRITE);
+					Serial.println("Opened current ecg file!");
 				}
 
 				short* readIndex = LONG_TIME_DOUBLE_BUFFER.readIndex();
 
+				//SINGLE_BUFFER_SIZE * 2 bc shorts are getting written which are 2 byte each
+				size_t writtenBytes = current_ekg_file.write(readIndex, SINGLE_BUFFER_SIZE * 2);
 
-				timeToWrite = millis();
-				current_ekg_file.write(readIndex, SINGLE_BUFFER_SIZE * 2);
+				Serial.print("Written Bytes: ");
+				Serial.println(writtenBytes);
 				current_ekg_file.flush();
+				Serial.print("FILE SIZE: ");
+				Serial.println(current_ekg_file.fileSize());
 				current_ekg_file.close();
 
 				Serial.println("First Data: ");
@@ -419,6 +426,12 @@ void loop() {
 
 
 			LONG_TIME_DOUBLE_BUFFER.readDone();
+
+			if (ekg_timer >= FULL_EKG_TIME)
+			{
+				//End the 24h ecg
+				end_24h_ecg();
+			}
 		}
 		
 		ADC_buffer_nextreadindex += SAADC_RESULT_BUFFER_SIZE;
@@ -431,9 +444,8 @@ void loop() {
 		ADC_buffer_full = 0;
 	}
 
-	
-}
 
+}
 
 
 /**
@@ -497,6 +509,8 @@ void handleAppCommunication() {
 		memcpy(&file_name[file_name_length], ".bin", 4);
 		memcpy(time_as_str, &buffer[delimiter_index + 2], length - delimiter_index);
 
+		memcpy(current_ecg_filename, file_name, delimiter_index + 5);
+
 		handleStart24HEKG(file_name, time_as_str);
 		break;
 	}
@@ -528,25 +542,22 @@ void handleAbortEKG()
 	}
 
 	//was a forced abort 
-	end_24h_ekg(true);
+	end_24h_ecg(true);
 }
 
-void end_24h_ekg()
+void end_24h_ecg()
 {
-	end_24h_ekg(false);
+	end_24h_ecg(false);
 }
 
-void end_24h_ekg(bool aborted)
+/**
+* Ends the ecg and switches back to live mode
+* @param aborted if the 24h ecg has been aborted forcefully
+*/
+void end_24h_ecg(bool aborted)
 {
 	//Change the mode, close the file, write metadata about the file
 	currentMode = Modes::LIVE;
-
-	current_ekg_file.flush();
-
-	char file_name[50];
-	current_ekg_file.getName(file_name, 50);
-
-	current_ekg_file.close();
 
 	if (aborted)
 	{
@@ -555,7 +566,8 @@ void end_24h_ekg(bool aborted)
 		communicationService.sendSuccessResponse(OPCodes::ABORT_24_H_EKG, reinterpret_cast<std::uint8_t*>(success_msg), strlen(success_msg));
 	}
 
-	create_meta_file(file_name, aborted);
+	create_meta_file(current_ecg_filename, aborted);
+	init_bpm_file();
 }
 
 
@@ -572,9 +584,13 @@ const String META_FILE_ECG_WAS_ABORTED = "aborted";
 */
 void create_meta_file(char *ecg_file_name, const bool was_aborted)
 {
+
+	Serial.println("Trying to create meta file..");
+
 	const size_t file_name_length = strlen(ecg_file_name);
-	char meta_file_name[file_name_length];
+	char meta_file_name[file_name_length + 1];
 	//Change the extension to txt
+	strcpy(meta_file_name, ecg_file_name);
 	memcpy(&meta_file_name[file_name_length-3],"txt", 3);
 
 	if (sd.exists(meta_file_name))
@@ -584,22 +600,26 @@ void create_meta_file(char *ecg_file_name, const bool was_aborted)
 		return;
 	}
 
-	FsFile meta_file = sd.open(meta_file_name, O_CREAT | O_WRITE);
+	Serial.println(meta_file_name);
 
-	if (!file) {
+	FsFile meta_file = sd.open(meta_file_name, FILE_WRITE);
+
+	if (!meta_file) {
 		//Error creating the file
-		Serial.println("Error while creating or opening file");
+		Serial.println("Error while creating or opening meta file");
 		return;
 	}
-	//add the start time
+	// Add the start time
 	String start_time_data = META_FILE_ECG_START + ":" + ullToString(ekg_start_time_ms) + DELIMITER;
-	file.write(start_time_data.c_str(), start_time_data.length());
-	//Add the end time
-	String end_time_data = META_FILE_ECG_END + ":" + ullToString(ekg_timer) + DELIMITER;
-	file.write(end_time_data.c_str(), end_time_data.length());
-	//Add if its was aborted
+	meta_file.print(start_time_data);
+
+	// Add the end time
+	String end_time_data = META_FILE_ECG_END + ":" + ullToString((ekg_start_time_ms + ekg_timer)) + DELIMITER;
+	meta_file.print(end_time_data);
+
+	// Add if it was aborted
 	String was_aborted_data = META_FILE_ECG_WAS_ABORTED + ":" + bool_to_string(was_aborted) + DELIMITER;
-	file.write(was_aborted_data.c_str(), was_aborted_data.length());
+	meta_file.print(was_aborted_data);
 
 	meta_file.flush();
 	meta_file.close();
@@ -648,7 +668,6 @@ void handleDeleteEKGFile(char* buffer, int lenght) {
 
 void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 	
-
 	Serial.println("FILENAME " + String(file_name));
 
 	Result result = appSerivce.create_ecg_file(file_name);
@@ -657,7 +676,7 @@ void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 	{
 		//Reset in case if there is old data
 		LONG_TIME_DOUBLE_BUFFER.reset();
-		current_ekg_file = sd.open(file_name, O_WRITE);
+		current_ekg_file = sd.open(file_name, FILE_WRITE);
 		ekg_timer = 0;
 		ekg_start_time_ms = strtoull(start_time_as_str, nullptr, 10);
 		Serial.print("Start time: ");
@@ -674,6 +693,7 @@ void handleStart24HEKG(char* file_name, char *start_time_as_str) {
 
 void init_bpm_file()
 {
+	/*
 	char ekg_name[50];
 	size_t ekg_name_length = current_ekg_file.getName(ekg_name, 50);
 
@@ -690,16 +710,49 @@ void init_bpm_file()
 
 	fill_bpm_file();
 
-	current_bpm_file.flush();
-	current_bpm_file.close();
+	delete bpmFilename;
+	*/
+	/*
+	const size_t file_name_length = strlen(current_ecg_filename);
+	char meta_file_name[file_name_length + 5];
+	//Change the extension to txt
+	strcpy(meta_file_name, current_ecg_filename);
+	memcpy(&meta_file_name[file_name_length - 7], "_bpm.txt", 7);
+	*/
+
+	const size_t file_name_length = strlen(current_ecg_filename);
+	char bpmFilename[file_name_length + 5]; // +5 for "_bpm.txt" being longer than ".bin"
+
+	strcpy(bpmFilename, current_ecg_filename);
+	strcpy(&bpmFilename[file_name_length - 4], "_bpm.txt");
+
+	Serial.println(bpmFilename);
+
+	// Open the new BPM file
+	current_bpm_file = sd.open(bpmFilename, FILE_WRITE);
+
+	if (!current_bpm_file) {
+		// Error handling
+		Serial.println("Error while creating BPM file");
+	}
+	else {
+		fill_bpm_file();
+		current_bpm_file.flush();
+		current_bpm_file.close();
+	}
+
 }
 
 void fill_bpm_file()
 {
+	current_ekg_file = sd.open(current_ecg_filename, FILE_READ);
+
 	//7500 is equal to 10 seconds at 125Hz
 	short temp_buffer[7500];
 	while (true)
 	{
+
+		
 		int bytes_read = current_ekg_file.read(temp_buffer, 15000);
 
 		if (bytes_read == 0 || bytes_read < 15000)
@@ -709,8 +762,12 @@ void fill_bpm_file()
 			break;
 		}
 
-		int bpmn = count_peaks(temp_buffer, 7500);
+		int bpm = count_peaks(temp_buffer, 7500);
 
-		current_bpm_file.write
+		current_bpm_file.print(bpm);
+		current_bpm_file.print(";");
+
+		Serial.print("Calculated BPM: ");
+		Serial.println(bpm);
 	}
 }

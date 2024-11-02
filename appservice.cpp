@@ -12,7 +12,7 @@ Result AppService::create_ecg_file(char* fileName)
         return Result::Error("File already exists!"); 
     }
 
-    FsFile file = this->sd.open(fileName, O_CREAT | O_WRITE);
+    FsFile file = this->sd.open(fileName, FILE_WRITE);
 
     if (!file) {
         //Error 
