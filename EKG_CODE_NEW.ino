@@ -28,13 +28,13 @@
 #define FALSE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD TRUE
+#define USE_SD_CARD FALSE
 
 //If serial should be used (for print debug messages)
 #define USE_SERIAL TRUE
 
 //If the battery should be init (needed for battery status)
-#define USE_BATTERY FALSE
+#define USE_BATTERY TRUE
 
 
 #define SAMPLETIME 5
@@ -42,8 +42,18 @@
 #define HW_TIMER_INTERVAL_MS 1000
 #define RINGBUFFERSIZE 500
 
+/* Constants used for the meta file */
+const String META_FILE_ECG_START = "start_time";
+const String META_FILE_ECG_END = "end_time";
+const String META_FILE_ECG_WAS_ABORTED = "aborted";
+
 //24H in ms
 const int FULL_EKG_TIME = 70000; //86400000
+
+//Delay between sending of the battery status
+const int BATTERY_SEND_DELAY = 60000;
+//boolean if the batter status should be send right away (e.g after a device connected)
+bool SEND_BATTERY_STATUS = false;
 
 //Doubled ring buffer which is used to as storage for the 24H ekg
 DoubledRingBuffer<short> LONG_TIME_DOUBLE_BUFFER;
@@ -115,6 +125,7 @@ void setup() {
 	init_adc();
 	init_sd_card();
 	init_ble();
+  init_battery_status();
 
 	if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS, TimerHandler)) {
 		Serial.print("Starting ITimer OK, millis() = ");
@@ -196,6 +207,7 @@ void timerIRQ() {
 	{
 		nrf_saadc_event_clear(NRF_SAADC_EVENT_END); 
 
+    //USE THIS when using real data is wanted
 		/*
 		for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
 		{
@@ -205,6 +217,7 @@ void timerIRQ() {
 			
 		}*/
 
+    //Iterates over test data (needed bc prototype microcontroller has no battery)
 		for (unsigned int i = 0; i < 10; i++)
 		{
 			LONG_TIME_DOUBLE_BUFFER.write(testdata[test_data_read_index]);
@@ -228,13 +241,16 @@ void timerIRQ() {
 void init_battery_status()
 {
 #if USE_BATTERY
+  Serial.println("Wire begin");
 	Wire.begin();
-
+  Serial.println("Wire begin done...");
 	if (!lipo.begin())
 	{
 		Serial.println("MAX17043 not detected!");
 		return;
 	}
+
+  lipo.quickStart();
 
 	Serial.println("MAX17043 successfully detected.");
 #endif 	
@@ -304,6 +320,8 @@ void updateMTU() {
 	//Update done 
 	updateMTUReady = false;
 	dataSendingReady = true;
+  //Send the battery now
+  SEND_BATTERY_STATUS = true;
 }
 
 void init_serial()
@@ -356,6 +374,7 @@ int counterEKG = 1;
 long last = 0;
 
 int test_data_index = 0;
+long last_battery_status = 0;
 
 void loop() {
 	BLE.poll();
@@ -372,7 +391,17 @@ void loop() {
 	}
 	*/
 
-
+  
+   if(SEND_BATTERY_STATUS || ((current_time - last_battery_status ) > BATTERY_SEND_DELAY)) {
+    if(BLE.connected()){
+      //Send the battery status 
+      BATTERY_CHARACTERSTIC.setValue(lipo.getSOC());
+      //store the last time we send the battery status
+      last_battery_status = current_time;
+      SEND_BATTERY_STATUS = false;
+    }
+   }
+    
 	if (ADC_buffer_full) {
 
 
@@ -396,8 +425,6 @@ void loop() {
 				if (!current_ekg_file.isOpen()) {
 					Serial.println("Opening current ecg file..");
 					//open it if needed
-					//char currentFileName[50];
-					//current_ekg_file.getName(currentFileName,50);
 					current_ekg_file = sd.open(current_ecg_filename, FILE_WRITE);
 					Serial.println("Opened current ecg file!");
 				}
@@ -569,13 +596,6 @@ void end_24h_ecg(bool aborted)
 	create_meta_file(current_ecg_filename, aborted);
 	init_bpm_file();
 }
-
-
-const String META_FILE_ECG_START = "start_time";
-const String META_FILE_ECG_END = "end_time";
-const String META_FILE_ECG_WAS_ABORTED = "aborted";
-
-
 
 /**
  * Creates the mata file for the ended ecg
