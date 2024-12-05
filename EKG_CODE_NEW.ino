@@ -31,7 +31,7 @@
 #define USE_SD_CARD FALSE
 
 //If serial should be used (for print debug messages)
-#define USE_SERIAL TRUE
+#define USE_SERIAL FALSE
 
 //If the battery should be init (needed for battery status)
 #define USE_BATTERY TRUE
@@ -97,21 +97,33 @@ char current_ecg_filename[50];
 SdFs sd;
 FsFile file;
 //Pin which is used for the CS 
-const int CHIP_SELECT_PIN = 10;
+const int CHIP_SELECT_PIN = 10;//27;//10;
 
 bool updateMTUReady = false;
 bool dataSendingReady = false;
 
 BLEDevice connectedDevice;
 
-#if USE_BATTERY
+//#if USE_BATTERY
 	SFE_MAX1704X lipo;
-#endif // USE_BATTERY
+//#endif // USE_BATTERY
 
 void setup() {
 	Serial.begin(9600);
 	pinMode(2, INPUT);
 	pinMode(3, INPUT);
+
+
+ // pinMode(12, OUTPUT);
+  //digitalWrite(12, HIGH);
+
+ // delay(5000);
+
+  ////  digitalWrite(12, LOW);
+
+   //   delay(5000);
+
+
 
 	SPI.begin();
 
@@ -123,9 +135,12 @@ void setup() {
 
 	init_serial();
 	init_adc();
+  
 	init_sd_card();
 	init_ble();
   init_battery_status();
+
+  //Von oben nach unten:  MOSI, CS, SCK, MISO
 
 	if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS, TimerHandler)) {
 		Serial.print("Starting ITimer OK, millis() = ");
@@ -208,22 +223,24 @@ void timerIRQ() {
 		nrf_saadc_event_clear(NRF_SAADC_EVENT_END); 
 
     //USE THIS when using real data is wanted
-		/*
+		
 		for (unsigned int i = 0; i < SAADC_RESULT_BUFFER_SIZE; i++)
 		{
 			ADCbuffer[ADC_buffer_nextwriteindex] = SAADC_RESULT_BUFFER[i];
 			ADC_buffer_nextwriteindex = (ADC_buffer_nextwriteindex + 1) % RINGBUFFERSIZE;
 			LONG_TIME_DOUBLE_BUFFER.write(SAADC_RESULT_BUFFER[i]);
 			
-		}*/
+		}
 
-    //Iterates over test data (needed bc prototype microcontroller has no battery)
+    //!!!!REMOVE THIS WHEN THE REAL DATA SHOULD BE USED!!!!!!!!
+    //Iterates over test data
+    /*
 		for (unsigned int i = 0; i < 10; i++)
 		{
 			LONG_TIME_DOUBLE_BUFFER.write(testdata[test_data_read_index]);
 
 			test_data_read_index = (test_data_read_index + 1) % 7500;
-		}
+		}*/
 		
 
 		ADC_buffer_full = 1;
@@ -314,7 +331,6 @@ void updateMTU() {
 	if (!updateMTUReady) {
 		return;
 	}
-	//TODO maybe see if this can be set add the event handler
 	communicationService.setMTU(ATT.mtu(connectedDevice));
 
 	//Update done 
@@ -401,6 +417,7 @@ void loop() {
       SEND_BATTERY_STATUS = false;
     }
    }
+   
     
 	if (ADC_buffer_full) {
 
@@ -413,6 +430,7 @@ void loop() {
 				Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
 				//Signal.setValue((byte*)&(testdata[test_data_index]), 20);
 				//Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
+        Serial.println("SENDING DATA");
 			}
 		}
 
@@ -483,6 +501,11 @@ void handleAppCommunication() {
 		//Nothing written do nothing
 		return;
 	}
+
+ // if(!dataSendingReady) {
+    //Data should not be exchanged now, mtu request has not been done
+ //   return;
+  //}
 
 	int length = APP_CHARACTERISITC.valueLength();
 
@@ -783,6 +806,10 @@ void fill_bpm_file()
 		}
 
 		int bpm = count_peaks(temp_buffer, 7500);
+
+		if (bpm > 1000) {
+			bpm = -1;
+		}
 
 		current_bpm_file.print(bpm);
 		current_bpm_file.print(";");

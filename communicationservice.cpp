@@ -13,7 +13,7 @@ CommunicationService::CommunicationService(BLECharacteristic *appCharacteristic)
 
 void CommunicationService::sendData(OPCodes opCode, std::uint8_t *data, std::uint16_t length) {
 
-  //Minus 3 bytes for ATT protocol data and
+  //Minus 3 bytes for ATT protocol overhead
   std::uint16_t blePayloadSize = this->mtu - 3;
   
   //minus an additional 2 bytes for the opcode and last bool of the send packet
