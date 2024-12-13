@@ -12,3 +12,5 @@ Wait until all the libaries are downloaded.
 To fulfill wanted requirements (in aspect to the data tranfer) some adjustments to the used ArduinoBLE-Libary had to be made.
 The forked repository can be found [here](https://github.com/Stefan7400/ArduinoBLE).
 Download the project as .zip, extract it, and replace the existing ArduinoBLE libary folder with the forked one.
+
+Now you should be ready to go.
