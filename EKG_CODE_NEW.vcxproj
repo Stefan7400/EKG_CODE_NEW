@@ -108,6 +108,9 @@
     <ClInclude Include="string_utils.hpp" />
     <ClInclude Include="__vm\.EKG_CODE_NEW.vsarduino.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+  </ItemGroup>
   <PropertyGroup>
     <DebuggerFlavor>VisualMicroDebugger</DebuggerFlavor>
   </PropertyGroup>

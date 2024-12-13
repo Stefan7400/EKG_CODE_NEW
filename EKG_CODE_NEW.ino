@@ -28,13 +28,13 @@
 #define FALSE 0
 
 //If sd card should be used (init etc.)
-#define USE_SD_CARD FALSE
+#define USE_SD_CARD TRUE
 
 //If serial should be used (for print debug messages)
-#define USE_SERIAL FALSE
+#define USE_SERIAL TRUE
 
 //If the battery should be init (needed for battery status)
-#define USE_BATTERY TRUE
+#define USE_BATTERY FALSE
 
 
 #define SAMPLETIME 5
@@ -407,7 +407,7 @@ void loop() {
 	}
 	*/
 
-  
+  /*
    if(SEND_BATTERY_STATUS || ((current_time - last_battery_status ) > BATTERY_SEND_DELAY)) {
     if(BLE.connected()){
       //Send the battery status 
@@ -417,6 +417,7 @@ void loop() {
       SEND_BATTERY_STATUS = false;
     }
    }
+   */
    
     
 	if (ADC_buffer_full) {
@@ -430,7 +431,7 @@ void loop() {
 				Signal.setValue((byte*)&(ADCbuffer[ADC_buffer_nextreadindex]), sizeof(SAADC_RESULT_BUFFER));
 				//Signal.setValue((byte*)&(testdata[test_data_index]), 20);
 				//Signal.writeValue(((char*) &(ADCbuffer[ADC_buffer_nextreadindex])));
-        Serial.println("SENDING DATA");
+        //Serial.println("SENDING DATA");
 			}
 		}
 
